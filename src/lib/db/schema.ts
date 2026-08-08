@@ -1,0 +1,379 @@
+import {
+  pgTable,
+  uuid,
+  text,
+  bigint,
+  integer,
+  numeric,
+  jsonb,
+  timestamp,
+  index,
+  uniqueIndex,
+  pgEnum,
+} from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+
+export const regionEnum = pgEnum("region", ["americas", "europe", "asia"]);
+export const contentTypeEnum = pgEnum("content_type", [
+  "ZVZ",
+  "SOLO",
+  "GROUP",
+]);
+export const ownerRoleEnum = pgEnum("owner_role", [
+  "killer",
+  "victim",
+  "group_member",
+  "participant",
+]);
+export const itemCategoryEnum = pgEnum("item_category", ["equipment", "inventory"]);
+export const jobStatusEnum = pgEnum("job_status", [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+]);
+
+export const guilds = pgTable(
+  "guilds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    albionId: text("albion_id").notNull(),
+    region: regionEnum("region").notNull(),
+    name: text("name").notNull(),
+    allianceId: text("alliance_id"),
+    allianceName: text("alliance_name"),
+    allianceTag: text("alliance_tag"),
+    killFame: bigint("kill_fame", { mode: "number" }).default(0),
+    deathFame: bigint("death_fame", { mode: "number" }).default(0),
+    memberCount: integer("member_count"),
+    rawPayload: jsonb("raw_payload"),
+    topBattlesPayload: jsonb("top_battles_payload"),
+    recentBattlesPayload: jsonb("recent_battles_payload"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    historyLastSyncedAt: timestamp("history_last_synced_at", { withTimezone: true }),
+    battlesLastSyncedAt: timestamp("battles_last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("guilds_albion_region_idx").on(t.albionId, t.region),
+    index("guilds_name_idx").on(t.name),
+  ]
+);
+
+export const alliances = pgTable(
+  "alliances",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    albionId: text("albion_id").notNull(),
+    region: regionEnum("region").notNull(),
+    name: text("name").notNull(),
+    tag: text("tag"),
+    memberCount: integer("member_count"),
+    founderId: text("founder_id"),
+    founderName: text("founder_name"),
+    founded: text("founded"),
+    killFame: bigint("kill_fame", { mode: "number" }).default(0),
+    deathFame: bigint("death_fame", { mode: "number" }).default(0),
+    guildsJson: jsonb("guilds_json"),
+    rawPayload: jsonb("raw_payload"),
+    topBattlesPayload: jsonb("top_battles_payload"),
+    recentBattlesPayload: jsonb("recent_battles_payload"),
+    battlesLastSyncedAt: timestamp("battles_last_synced_at", { withTimezone: true }),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("alliances_albion_region_idx").on(t.albionId, t.region),
+    index("alliances_name_idx").on(t.name),
+  ]
+);
+
+export const players = pgTable(
+  "players",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    albionId: text("albion_id").notNull(),
+    region: regionEnum("region").notNull(),
+    name: text("name").notNull(),
+    guildId: uuid("guild_id").references(() => guilds.id),
+    allianceId: text("alliance_id"),
+    allianceName: text("alliance_name"),
+    avatar: text("avatar"),
+    avatarRing: text("avatar_ring"),
+    killFame: bigint("kill_fame", { mode: "number" }).default(0),
+    deathFame: bigint("death_fame", { mode: "number" }).default(0),
+    fameRatio: numeric("fame_ratio", { precision: 10, scale: 4 }),
+    lifetimeStats: jsonb("lifetime_stats"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+    historyLastSyncedAt: timestamp("history_last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("players_albion_region_idx").on(t.albionId, t.region),
+    index("players_name_idx").on(t.name),
+    index("players_guild_idx").on(t.guildId),
+  ]
+);
+
+export const battles = pgTable(
+  "battles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    albionBattleId: bigint("albion_battle_id", { mode: "number" }).notNull(),
+    region: regionEnum("region").notNull(),
+    startTime: timestamp("start_time", { withTimezone: true }),
+    endTime: timestamp("end_time", { withTimezone: true }),
+    totalFame: bigint("total_fame", { mode: "number" }),
+    totalKills: integer("total_kills"),
+    totalPlayers: integer("total_players"),
+    rawPayload: jsonb("raw_payload"),
+    eventsPayload: jsonb("events_payload"),
+    detailPayload: jsonb("detail_payload"),
+    detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
+    /**
+     * When set, heavy JSON was cleared for storage; stub columns remain so a visit
+     * can re-queue sync-battle. Distinct from detail_sync_unavailable (Albion give-up).
+     */
+    detailEvictedAt: timestamp("detail_evicted_at", { withTimezone: true }),
+    /** 1 when Albion never published detail after soft-defer give-up — stop re-queueing. */
+    detailSyncUnavailable: integer("detail_sync_unavailable").default(0),
+    detailSyncGiveUpAt: timestamp("detail_sync_give_up_at", { withTimezone: true }),
+    detailSyncLastError: text("detail_sync_last_error"),
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("battles_albion_region_idx").on(t.albionBattleId, t.region),
+    index("battles_detail_evict_idx").on(t.endTime, t.detailEvictedAt),
+  ]
+);
+
+export const killEvents = pgTable(
+  "kill_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: bigint("event_id", { mode: "number" }).notNull(),
+    region: regionEnum("region").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    contentType: contentTypeEnum("content_type").default("GROUP").notNull(),
+    battleId: uuid("battle_id").references(() => battles.id),
+    albionBattleId: bigint("albion_battle_id", { mode: "number" }),
+    killerId: uuid("killer_id").references(() => players.id),
+    victimId: uuid("victim_id").references(() => players.id),
+    totalVictimKillFame: bigint("total_victim_kill_fame", { mode: "number" }),
+    participantCount: integer("participant_count"),
+    groupMemberCount: integer("group_member_count"),
+    rawPayload: jsonb("raw_payload").notNull(),
+    detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("kill_events_event_region_idx").on(t.eventId, t.region),
+    index("kill_events_occurred_idx").on(t.region, t.occurredAt),
+    index("kill_events_killer_idx").on(t.killerId, t.occurredAt),
+    index("kill_events_victim_idx").on(t.victimId, t.occurredAt),
+    index("kill_events_content_idx").on(t.contentType, t.occurredAt),
+    /** Speeds public kill lists that exclude zero-fame (empty drop) events. */
+    index("kill_events_region_occurred_fame_idx")
+      .on(t.region, t.occurredAt)
+      .where(sql`${t.totalVictimKillFame} > 0`),
+  ]
+);
+
+export const killParticipants = pgTable(
+  "kill_participants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .references(() => killEvents.id, { onDelete: "cascade" })
+      .notNull(),
+    playerId: uuid("player_id").references(() => players.id),
+    role: ownerRoleEnum("role").notNull(),
+    name: text("name"),
+    guildName: text("guild_name"),
+    averageItemPower: numeric("average_item_power", { precision: 10, scale: 2 }),
+    killFame: bigint("kill_fame", { mode: "number" }),
+    deathFame: bigint("death_fame", { mode: "number" }),
+    supportHealingDone: bigint("support_healing_done", { mode: "number" }),
+    rawPayload: jsonb("raw_payload"),
+  },
+  (t) => [
+    index("kill_participants_event_idx").on(t.eventId),
+    index("kill_participants_guild_role_idx").on(t.guildName, t.role),
+  ]
+);
+
+export const killItems = pgTable(
+  "kill_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .references(() => killEvents.id, { onDelete: "cascade" })
+      .notNull(),
+    participantId: uuid("participant_id").references(() => killParticipants.id, {
+      onDelete: "cascade",
+    }),
+    ownerRole: ownerRoleEnum("owner_role").notNull(),
+    category: itemCategoryEnum("category").notNull(),
+    slot: text("slot"),
+    itemType: text("item_type").notNull(),
+    quality: integer("quality").default(0),
+    count: integer("count").default(1),
+    spells: jsonb("spells"),
+  },
+  (t) => [index("kill_items_event_idx").on(t.eventId)]
+);
+
+export const apiSyncState = pgTable(
+  "api_sync_state",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull().unique(),
+    lastSeenEventId: bigint("last_seen_event_id", { mode: "number" }),
+    lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+    lastIngestAt: timestamp("last_ingest_at", { withTimezone: true }),
+    lastHealthCheckAt: timestamp("last_health_check_at", { withTimezone: true }),
+    lastHealthCheckOk: integer("last_health_check_ok").default(0),
+    lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+    lastErrorMessage: text("last_error_message"),
+    consecutiveFailures: integer("consecutive_failures").default(0),
+    circuitOpen: integer("circuit_open").default(0),
+    circuitOpenedAt: timestamp("circuit_opened_at", { withTimezone: true }),
+    rateLimitUntil: timestamp("rate_limit_until", { withTimezone: true }),
+    avgLatencyMs: integer("avg_latency_ms").default(0),
+    eventsIngestedLastHour: integer("events_ingested_last_hour").default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  }
+);
+
+export const backgroundJobs = pgTable(
+  "background_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    dedupeKey: text("dedupe_key").notNull(),
+    queue: text("queue").notNull(),
+    name: text("name").notNull(),
+    payload: jsonb("payload").notNull().default({}),
+    status: jobStatusEnum("status").notNull().default("pending"),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    lastError: text("last_error"),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("background_jobs_status_run_at_idx").on(t.status, t.runAt),
+    index("background_jobs_queue_status_idx").on(t.queue, t.status),
+    index("background_jobs_dedupe_key_idx").on(t.dedupeKey),
+  ]
+);
+
+export const apiRequestLogs = pgTable(
+  "api_request_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    endpoint: text("endpoint").notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    status: text("status").notNull(),
+    errorType: text("error_type"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("api_request_logs_region_created_idx").on(t.region, t.createdAt)]
+);
+
+export const cronJobState = pgTable("cron_job_state", {
+  jobKey: text("job_key").primaryKey(),
+  label: text("label").notNull(),
+  path: text("path").notNull(),
+  schedule: text("schedule").notNull(),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true }),
+  lastErrorMessage: text("last_error_message"),
+  lastStatus: text("last_status"),
+  lastResult: jsonb("last_result"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const itemMarketPrices = pgTable(
+  "item_market_prices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    itemId: text("item_id").notNull(),
+    quality: integer("quality").notNull(),
+    unitPrice: bigint("unit_price", { mode: "number" }).notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("item_market_prices_region_item_quality_idx").on(
+      t.region,
+      t.itemId,
+      t.quality
+    ),
+    index("item_market_prices_updated_at_idx").on(t.updatedAt),
+  ]
+);
+
+export const guildsRelations = relations(guilds, ({ many }) => ({
+  players: many(players),
+}));
+
+export const playersRelations = relations(players, ({ one, many }) => ({
+  guild: one(guilds, { fields: [players.guildId], references: [guilds.id] }),
+  killsAsKiller: many(killEvents, { relationName: "killer" }),
+  killsAsVictim: many(killEvents, { relationName: "victim" }),
+}));
+
+export const killEventsRelations = relations(killEvents, ({ one, many }) => ({
+  killer: one(players, {
+    fields: [killEvents.killerId],
+    references: [players.id],
+    relationName: "killer",
+  }),
+  victim: one(players, {
+    fields: [killEvents.victimId],
+    references: [players.id],
+    relationName: "victim",
+  }),
+  battle: one(battles, {
+    fields: [killEvents.battleId],
+    references: [battles.id],
+  }),
+  participants: many(killParticipants),
+  items: many(killItems),
+}));
+
+export const killParticipantsRelations = relations(killParticipants, ({ one, many }) => ({
+  event: one(killEvents, {
+    fields: [killParticipants.eventId],
+    references: [killEvents.id],
+  }),
+  player: one(players, {
+    fields: [killParticipants.playerId],
+    references: [players.id],
+  }),
+  items: many(killItems),
+}));
+
+export const killItemsRelations = relations(killItems, ({ one }) => ({
+  event: one(killEvents, {
+    fields: [killItems.eventId],
+    references: [killEvents.id],
+  }),
+  participant: one(killParticipants, {
+    fields: [killItems.participantId],
+    references: [killParticipants.id],
+  }),
+}));

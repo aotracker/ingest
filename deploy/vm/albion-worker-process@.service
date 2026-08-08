@@ -1,0 +1,24 @@
+[Unit]
+Description=Albion Kill Tracker — BullMQ job processor (%i)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=albion
+Group=albion
+WorkingDirectory=/opt/aotracker/ingest
+EnvironmentFile=/opt/aotracker/ingest/.env
+Environment=JOBS_REGION=%i
+Environment=JOBS_SOURCE=worker-%i
+ExecStart=/usr/bin/npm run worker:process
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

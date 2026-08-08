@@ -1,0 +1,16 @@
+[Unit]
+Description=Albion Kill Tracker — evict stale battle detail JSON
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=albion
+Group=albion
+WorkingDirectory=/opt/aotracker/ingest
+EnvironmentFile=/opt/aotracker/ingest/.env
+ExecStart=/usr/bin/npm run db:evict-battle-details
+Nice=10
+TimeoutStartSec=1h
+
+LimitNOFILE=4096

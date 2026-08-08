@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Albion Kill Tracker battle detail eviction
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00
+Persistent=true
+RandomizedDelaySec=30m
+Unit=albion-battle-evict.service
+
+[Install]
+WantedBy=timers.target

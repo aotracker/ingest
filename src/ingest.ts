@@ -1,0 +1,1438 @@
+import { and, eq } from "drizzle-orm";
+import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
+import { getAlbionClient } from "@aotracker/core/albion/client";
+import { isHttpNotFoundError } from "@aotracker/core/albion/errors";
+import { normalizeAllianceInfo } from "@aotracker/core/albion/alliance-info";
+import {
+  getAllianceBattlesBySort,
+  getGuildBattlesBySort,
+  guildBattleListNeedsRefresh,
+  isGuildBattleCacheComplete,
+  wrapGuildBattleListCache,
+} from "@aotracker/core/albion/battles";
+import { fetchPlayerHistoryFromApi } from "@aotracker/core/albion/player-history-api";
+import type {
+  AlbionEvent,
+  AlbionAllianceInfo,
+  AlbionGuildInfo,
+  AlbionPlayerRef,
+  AlbionRegion,
+  AlbionEquipment,
+  AlbionItem,
+  EquipmentSlot,
+} from "@aotracker/core/albion/types";
+import {
+  EQUIPMENT_SLOTS,
+  ENABLED_REGIONS,
+  isRegionEnabled,
+} from "@aotracker/core/albion/types";
+import {
+  RECENT_BATTLES_MIN_FAME,
+  RECENT_BATTLES_MIN_PLAYERS,
+  RECENT_BATTLES_POLL_LIMIT,
+} from "@aotracker/core/battles-constants";
+import { db, schema } from "@aotracker/core/db";
+import {
+  battleMeetsDetailSyncThreshold,
+  BATTLE_BELOW_SYNC_THRESHOLD_ERROR,
+  isBattleDetailSyncUnavailable,
+  markBattleDetailUnavailable,
+  upsertBattleFromRecentList,
+} from "@aotracker/core/db/battle-cache";
+import { isKillEventCached } from "@aotracker/core/db/kill-cache";
+import {
+  cacheAllianceBattleLists,
+  getAllianceFameFromMemberGuilds,
+  incrementEventsIngested,
+} from "@aotracker/core/db/queries-ingest";
+import { shouldUpdateEntity, isSyncStale } from "@aotracker/core/db/sync";
+import { toBigInt } from "@aotracker/core/utils";
+import { ensureBattleDetailQueued } from "./jobs/enqueue";
+
+export async function upsertGuild(
+  region: AlbionRegion,
+  ref: { GuildId?: string; GuildName?: string; AllianceId?: string; AllianceName?: string; AllianceTag?: string }
+) {
+  if (!ref.GuildId || !ref.GuildName) return null;
+
+  const existing = await db.query.guilds.findFirst({
+    where: and(
+      eq(schema.guilds.albionId, ref.GuildId),
+      eq(schema.guilds.region, region)
+    ),
+  });
+
+  if (existing) {
+    await db
+      .update(schema.guilds)
+      .set({
+        name: ref.GuildName,
+        allianceId: ref.AllianceId ?? existing.allianceId,
+        allianceName: ref.AllianceName ?? existing.allianceName,
+        allianceTag: ref.AllianceTag ?? existing.allianceTag,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.guilds.id, existing.id));
+    return existing.id;
+  }
+
+  const [inserted] = await db
+    .insert(schema.guilds)
+    .values({
+      albionId: ref.GuildId,
+      region,
+      name: ref.GuildName,
+      allianceId: ref.AllianceId,
+      allianceName: ref.AllianceName,
+      allianceTag: ref.AllianceTag,
+    })
+    .returning({ id: schema.guilds.id });
+
+  return inserted.id;
+}
+
+export async function upsertGuildFromInfo(
+  region: AlbionRegion,
+  info: AlbionGuildInfo
+): Promise<string | null> {
+  if (!info.Id || !info.Name) return null;
+
+  const existing = await db.query.guilds.findFirst({
+    where: and(
+      eq(schema.guilds.albionId, info.Id),
+      eq(schema.guilds.region, region)
+    ),
+  });
+
+  const now = new Date();
+  const incomingScalars = {
+    name: info.Name,
+    allianceId: info.AllianceId ?? null,
+    allianceName: info.AllianceName ?? null,
+    allianceTag: info.AllianceTag ?? null,
+    killFame: toBigInt(info.killFame) ?? 0,
+    deathFame: toBigInt(info.DeathFame) ?? 0,
+    memberCount: info.MemberCount ?? null,
+  };
+
+  const { changed } = shouldUpdateEntity(
+    existing,
+    info,
+    existing
+      ? {
+          name: existing.name,
+          allianceId: existing.allianceId,
+          allianceName: existing.allianceName,
+          allianceTag: existing.allianceTag,
+          killFame: existing.killFame,
+          deathFame: existing.deathFame,
+          memberCount: existing.memberCount,
+        }
+      : {},
+    incomingScalars,
+    ["name", "allianceId", "allianceName", "allianceTag", "killFame", "deathFame", "memberCount"]
+  );
+
+  if (existing && !changed) {
+    await db
+      .update(schema.guilds)
+      .set({ lastSyncedAt: now, lastCheckedAt: now, updatedAt: now })
+      .where(eq(schema.guilds.id, existing.id));
+    return existing.id;
+  }
+
+  const guildData = {
+    ...incomingScalars,
+    rawPayload: info as unknown as Record<string, unknown>,
+    lastSyncedAt: now,
+    lastCheckedAt: now,
+    updatedAt: now,
+  };
+
+  if (existing) {
+    await db
+      .update(schema.guilds)
+      .set(guildData)
+      .where(eq(schema.guilds.id, existing.id));
+
+    return existing.id;
+  }
+
+  const [inserted] = await db
+    .insert(schema.guilds)
+    .values({
+      albionId: info.Id,
+      region,
+      ...guildData,
+    })
+    .returning({ id: schema.guilds.id });
+
+  return inserted.id;
+}
+
+export async function upsertAllianceFromInfo(
+  region: AlbionRegion,
+  raw: AlbionAllianceInfo
+): Promise<string | null> {
+  const info = normalizeAllianceInfo(raw);
+  if (!info) return null;
+
+  const existing = await db.query.alliances.findFirst({
+    where: and(
+      eq(schema.alliances.albionId, info.id),
+      eq(schema.alliances.region, region)
+    ),
+  });
+
+  const now = new Date();
+  const incomingScalars = {
+    name: info.name,
+    tag: info.tag,
+    memberCount: info.memberCount,
+    founderId: info.founderId,
+    founderName: info.founderName,
+    founded: info.founded,
+    guildsJson: info.guilds ?? null,
+  };
+
+  const { changed } = shouldUpdateEntity(
+    existing,
+    raw,
+    existing
+      ? {
+          name: existing.name,
+          tag: existing.tag,
+          memberCount: existing.memberCount,
+          founderId: existing.founderId,
+          founderName: existing.founderName,
+          founded: existing.founded,
+          guildsJson: existing.guildsJson,
+        }
+      : {},
+    incomingScalars,
+    ["name", "tag", "memberCount", "founderId", "founderName", "founded", "guildsJson"]
+  );
+
+  if (existing && !changed) {
+    await db
+      .update(schema.alliances)
+      .set({ lastCheckedAt: now, updatedAt: now })
+      .where(eq(schema.alliances.id, existing.id));
+    return existing.id;
+  }
+
+  const allianceData = {
+    ...incomingScalars,
+    rawPayload: raw as unknown as Record<string, unknown>,
+    lastSyncedAt: now,
+    lastCheckedAt: now,
+    updatedAt: now,
+  };
+
+  if (existing) {
+    await db
+      .update(schema.alliances)
+      .set(allianceData)
+      .where(eq(schema.alliances.id, existing.id));
+    return existing.id;
+  }
+
+  const [inserted] = await db
+    .insert(schema.alliances)
+    .values({
+      albionId: info.id,
+      region,
+      ...allianceData,
+    })
+    .returning({ id: schema.alliances.id });
+
+  return inserted.id;
+}
+
+export async function upsertPlayer(
+  region: AlbionRegion,
+  ref: AlbionPlayerRef
+): Promise<string | null> {
+  if (!ref.Id || !ref.Name) return null;
+
+  let guildId: string | null = null;
+  if (ref.GuildId && ref.GuildName) {
+    guildId = await upsertGuild(region, ref);
+  }
+
+  const existing = await db.query.players.findFirst({
+    where: and(
+      eq(schema.players.albionId, ref.Id),
+      eq(schema.players.region, region)
+    ),
+  });
+
+  // Event participant refs may include KillFame/DeathFame, but those are per-event
+  // values (e.g. victim gear fame), not lifetime totals. Only refreshPlayerProfile
+  // should write kill_fame/death_fame on the players table.
+  const playerData = {
+    name: ref.Name,
+    guildId,
+    allianceId: ref.AllianceId ?? null,
+    allianceName: ref.AllianceName ?? null,
+    avatar: ref.Avatar ?? null,
+    avatarRing: ref.AvatarRing ?? null,
+    updatedAt: new Date(),
+  };
+
+  if (existing) {
+    await db
+      .update(schema.players)
+      .set(playerData)
+      .where(eq(schema.players.id, existing.id));
+    return existing.id;
+  }
+
+  const [inserted] = await db
+    .insert(schema.players)
+    .values({
+      albionId: ref.Id,
+      region,
+      ...playerData,
+      killFame: 0,
+      deathFame: 0,
+    })
+    .onConflictDoNothing({
+      target: [schema.players.albionId, schema.players.region],
+    })
+    .returning({ id: schema.players.id });
+
+  if (inserted) return inserted.id;
+
+  const raced = await db.query.players.findFirst({
+    where: and(
+      eq(schema.players.albionId, ref.Id),
+      eq(schema.players.region, region)
+    ),
+  });
+  return raced?.id ?? null;
+}
+
+async function queueBattleDetailSync(
+  region: AlbionRegion,
+  albionBattleId: number
+): Promise<void> {
+  try {
+    if (await isBattleDetailSyncUnavailable(region, albionBattleId)) return;
+
+    await ensureBattleDetailQueued(region, albionBattleId);
+  } catch (err) {
+    console.error(
+      `[ingest] Failed to queue battle detail sync for ${region}/${albionBattleId}:`,
+      err
+    );
+  }
+}
+
+async function findBattleUuid(
+  region: AlbionRegion,
+  albionBattleId: number
+): Promise<string | null> {
+  const existing = await db.query.battles.findFirst({
+    where: and(
+      eq(schema.battles.albionBattleId, albionBattleId),
+      eq(schema.battles.region, region)
+    ),
+    columns: { id: true },
+  });
+  return existing?.id ?? null;
+}
+
+/**
+ * Upsert a battle row confirmed via Albion `/battles/{id}`.
+ * Only queues detail sync when `queueDetailSync` is true and the battle meets
+ * the size threshold (≥3 players or ≥3 kills).
+ */
+async function upsertBattle(
+  region: AlbionRegion,
+  albionBattleId: number,
+  battleData?: { totalPlayers?: number; totalKills?: number; totalFame?: number },
+  options?: { queueDetailSync?: boolean }
+) {
+  const queueDetailSync = options?.queueDetailSync === true;
+  const existing = await db.query.battles.findFirst({
+    where: and(
+      eq(schema.battles.albionBattleId, albionBattleId),
+      eq(schema.battles.region, region)
+    ),
+    columns: {
+      id: true,
+      totalFame: true,
+      totalKills: true,
+      totalPlayers: true,
+      detailPayload: true,
+    },
+  });
+
+  if (existing) {
+    const mergedPlayers = existing.totalPlayers ?? battleData?.totalPlayers;
+    const mergedKills = existing.totalKills ?? battleData?.totalKills;
+    const eligible = battleMeetsDetailSyncThreshold({
+      totalPlayers: mergedPlayers,
+      totalKills: mergedKills,
+    });
+
+    const shouldBackfillStats =
+      battleData != null &&
+      (existing.totalFame == null ||
+        existing.totalKills == null ||
+        existing.totalPlayers == null) &&
+      (battleData.totalFame != null ||
+        battleData.totalKills != null ||
+        battleData.totalPlayers != null);
+
+    if (shouldBackfillStats) {
+      await db
+        .update(schema.battles)
+        .set({
+          totalPlayers: mergedPlayers,
+          totalKills: mergedKills,
+          totalFame:
+            existing.totalFame ?? toBigInt(battleData.totalFame) ?? undefined,
+          lastSyncedAt: new Date(),
+          // Only clear give-up when this battle is large enough to sync.
+          ...(eligible
+            ? {
+                detailSyncUnavailable: 0,
+                detailSyncGiveUpAt: null,
+                detailSyncLastError: null,
+              }
+            : {}),
+        })
+        .where(eq(schema.battles.id, existing.id));
+    }
+
+    const needsDetail =
+      existing.totalFame == null || existing.detailPayload == null;
+    if (queueDetailSync && needsDetail && eligible) {
+      await queueBattleDetailSync(region, albionBattleId);
+    }
+
+    return existing.id;
+  }
+
+  const eligible = battleMeetsDetailSyncThreshold({
+    totalPlayers: battleData?.totalPlayers,
+    totalKills: battleData?.totalKills,
+  });
+
+  const [inserted] = await db
+    .insert(schema.battles)
+    .values({
+      albionBattleId,
+      region,
+      totalPlayers: battleData?.totalPlayers,
+      totalKills: battleData?.totalKills,
+      totalFame: toBigInt(battleData?.totalFame) ?? undefined,
+      lastSyncedAt: new Date(),
+    })
+    .returning({ id: schema.battles.id });
+
+  if (queueDetailSync && eligible) {
+    await queueBattleDetailSync(region, albionBattleId);
+  }
+
+  return inserted.id;
+}
+
+function extractItemsFromEquipment(
+  equipment: AlbionEquipment | undefined,
+  ownerRole: "killer" | "victim" | "group_member" | "participant"
+) {
+  const items: {
+    ownerRole: typeof ownerRole;
+    category: "equipment";
+    slot: string;
+    itemType: string;
+    quality: number;
+    count: number;
+    spells: { active: string[]; passive: string[] };
+  }[] = [];
+
+  if (!equipment) return items;
+
+  for (const slot of EQUIPMENT_SLOTS) {
+    const item = equipment[slot as EquipmentSlot];
+    if (item?.Type) {
+      items.push({
+        ownerRole,
+        category: "equipment",
+        slot,
+        itemType: item.Type,
+        quality: item.Quality ?? 0,
+        count: item.Count ?? 1,
+        spells: {
+          active: item.ActiveSpells ?? [],
+          passive: item.PassiveSpells ?? [],
+        },
+      });
+    }
+  }
+
+  return items;
+}
+
+function extractInventoryItems(
+  inventory: (AlbionItem | null)[] | undefined,
+  ownerRole: "killer" | "victim" | "group_member" | "participant"
+) {
+  const items: {
+    ownerRole: typeof ownerRole;
+    category: "inventory";
+    slot: string | null;
+    itemType: string;
+    quality: number;
+    count: number;
+    spells: { active: string[]; passive: string[] };
+  }[] = [];
+
+  if (!inventory) return items;
+
+  inventory.forEach((item, index) => {
+    if (item?.Type) {
+      items.push({
+        ownerRole,
+        category: "inventory",
+        slot: `slot_${index}`,
+        itemType: item.Type,
+        quality: item.Quality ?? 0,
+        count: item.Count ?? 1,
+        spells: {
+          active: item.ActiveSpells ?? [],
+          passive: item.PassiveSpells ?? [],
+        },
+      });
+    }
+  });
+
+  return items;
+}
+
+type KillEventItemInsert = {
+  ownerRole: "killer" | "victim" | "group_member" | "participant";
+  category: "equipment" | "inventory";
+  slot: string | null;
+  itemType: string;
+  quality: number;
+  count: number;
+  spells: { active: string[]; passive: string[] };
+};
+
+type KillEventParticipantInsert = {
+  role: "killer" | "victim" | "group_member" | "participant";
+  ref: AlbionPlayerRef;
+};
+
+function collectKillEventRelations(event: AlbionEvent): {
+  allItems: KillEventItemInsert[];
+  participantInserts: KillEventParticipantInsert[];
+} {
+  const allItems: KillEventItemInsert[] = [];
+  const participantInserts: KillEventParticipantInsert[] = [];
+
+  if (event.Killer) {
+    allItems.push(
+      ...extractItemsFromEquipment(event.Killer.Equipment, "killer"),
+      ...extractInventoryItems(event.Killer.Inventory, "killer")
+    );
+    participantInserts.push({ role: "killer", ref: event.Killer });
+  }
+  if (event.Victim) {
+    allItems.push(
+      ...extractItemsFromEquipment(event.Victim.Equipment, "victim"),
+      ...extractInventoryItems(event.Victim.Inventory, "victim")
+    );
+    participantInserts.push({ role: "victim", ref: event.Victim });
+  }
+  for (const member of event.GroupMembers ?? []) {
+    participantInserts.push({ role: "group_member", ref: member });
+    allItems.push(
+      ...extractItemsFromEquipment(member.Equipment, "group_member"),
+      ...extractInventoryItems(member.Inventory, "group_member")
+    );
+  }
+  for (const participant of event.Participants ?? []) {
+    participantInserts.push({ role: "participant", ref: participant });
+    allItems.push(
+      ...extractItemsFromEquipment(participant.Equipment, "participant"),
+      ...extractInventoryItems(participant.Inventory, "participant")
+    );
+  }
+
+  return { allItems, participantInserts };
+}
+
+async function persistKillEventRelations(
+  region: AlbionRegion,
+  killEventUuid: string,
+  participantInserts: KillEventParticipantInsert[],
+  allItems: KillEventItemInsert[]
+) {
+  for (const { role, ref } of participantInserts) {
+    const playerId = ref.Id ? await upsertPlayer(region, ref) : null;
+    await db.insert(schema.killParticipants).values({
+      eventId: killEventUuid,
+      playerId,
+      role,
+      name: ref.Name ?? null,
+      guildName: ref.GuildName ?? null,
+      averageItemPower: ref.AverageItemPower?.toString() ?? null,
+      killFame: toBigInt(ref.KillFame),
+      deathFame: toBigInt(ref.DeathFame),
+      supportHealingDone: toBigInt(ref.SupportHealingDone),
+      rawPayload: ref,
+    });
+  }
+
+  if (allItems.length > 0) {
+    await db.insert(schema.killItems).values(
+      allItems.map((item) => ({
+        eventId: killEventUuid,
+        ownerRole: item.ownerRole,
+        category: item.category,
+        slot: item.slot,
+        itemType: item.itemType,
+        quality: item.quality,
+        count: item.count,
+        spells: item.spells,
+      }))
+    );
+  }
+}
+
+/** Lightweight battle stats used for ZvZ classification during ingest. */
+export type IngestBattleStats = {
+  totalPlayers?: number;
+  totalKills?: number;
+  totalFame?: number;
+} | null;
+
+/**
+ * Resolve battle stats for ingest, reusing an in-batch cache and DB rows before
+ * calling the Albion API (avoids N identical /battles/{id} fetches per ZvZ).
+ * On HTTP 404, marks the battle unavailable so we never soft-defer-loop it.
+ */
+async function resolveBattleStatsForIngest(
+  region: AlbionRegion,
+  battleId: number,
+  cache?: Map<number, IngestBattleStats>
+): Promise<IngestBattleStats> {
+  if (cache?.has(battleId)) {
+    return cache.get(battleId) ?? null;
+  }
+
+  const existing = await db.query.battles.findFirst({
+    where: and(
+      eq(schema.battles.albionBattleId, battleId),
+      eq(schema.battles.region, region)
+    ),
+    columns: {
+      totalPlayers: true,
+      totalKills: true,
+      totalFame: true,
+      detailSyncUnavailable: true,
+    },
+  });
+
+  if (existing?.detailSyncUnavailable === 1) {
+    cache?.set(battleId, null);
+    return null;
+  }
+
+  if (existing?.totalPlayers != null) {
+    const stats: IngestBattleStats = {
+      totalPlayers: existing.totalPlayers,
+      totalKills: existing.totalKills ?? undefined,
+      totalFame: existing.totalFame ?? undefined,
+    };
+    cache?.set(battleId, stats);
+    return stats;
+  }
+
+  try {
+    const client = getAlbionClient();
+    const battle = await client.getBattle(region, battleId);
+    const stats: IngestBattleStats = {
+      totalPlayers: battle.totalPlayers,
+      totalKills: battle.totalKills,
+      totalFame: battle.totalFame,
+    };
+    cache?.set(battleId, stats);
+    return stats;
+  } catch (err) {
+    cache?.set(battleId, null);
+    if (isHttpNotFoundError(err)) {
+      await markBattleDetailUnavailable(
+        region,
+        battleId,
+        err instanceof Error ? err.message : "HTTP 404 from Albion battles API"
+      ).catch(() => undefined);
+    }
+    return null;
+  }
+}
+
+export async function upsertKillEventDetail(
+  region: AlbionRegion,
+  event: AlbionEvent,
+  options?: {
+    fetchBattleDetail?: boolean;
+    battleDetailCache?: Map<number, IngestBattleStats>;
+  }
+): Promise<boolean> {
+  const existing = await db.query.killEvents.findFirst({
+    where: and(
+      eq(schema.killEvents.eventId, event.EventId),
+      eq(schema.killEvents.region, region)
+    ),
+  });
+
+  if (existing?.detailSyncedAt) return false;
+
+  // History backfills skip battle fetches (rate limit) and never auto-queue
+  // sync-battle — kill events only store albionBattleId; detail loads on visit
+  // or when live ingest confirms `/battles/{id}` exists.
+  const fetchBattleDetail = options?.fetchBattleDetail !== false;
+  let battleDetail: IngestBattleStats = null;
+  if (fetchBattleDetail && event.BattleId) {
+    battleDetail = await resolveBattleStatsForIngest(
+      region,
+      event.BattleId,
+      options?.battleDetailCache
+    );
+  }
+
+  const counts = extractEventCounts(event);
+  const contentType = classifyContentType({
+    killer: event.Killer,
+    victim: event.Victim,
+    participantCount: counts.participantCount,
+    groupMemberCount: counts.groupMemberCount,
+    groupMembers: event.GroupMembers,
+    participants: event.Participants,
+    battleTotalPlayers: battleDetail?.totalPlayers,
+  });
+
+  const killerId = event.Killer ? await upsertPlayer(region, event.Killer) : null;
+  const victimId = event.Victim ? await upsertPlayer(region, event.Victim) : null;
+
+  let battleUuid: string | null = null;
+  if (event.BattleId) {
+    if (battleDetail) {
+      const eligible = battleMeetsDetailSyncThreshold(battleDetail);
+      // Always keep kill → battle linkage; only queue detail sync when large enough.
+      battleUuid = await upsertBattle(
+        region,
+        event.BattleId,
+        {
+          totalPlayers: battleDetail.totalPlayers,
+          totalKills: battleDetail.totalKills,
+          totalFame: battleDetail.totalFame,
+        },
+        { queueDetailSync: eligible }
+      );
+      if (!eligible) {
+        await markBattleDetailUnavailable(
+          region,
+          event.BattleId,
+          BATTLE_BELOW_SYNC_THRESHOLD_ERROR
+        ).catch(() => undefined);
+      }
+    } else {
+      // History, 404 ghost, or transient miss: keep albionBattleId on the kill;
+      // link FK only if a battles row already exists. Do not stub+queue.
+      battleUuid = await findBattleUuid(region, event.BattleId);
+    }
+  }
+
+  const now = new Date();
+  const eventRow = {
+    occurredAt: new Date(event.TimeStamp),
+    contentType,
+    battleId: battleUuid,
+    albionBattleId: event.BattleId ?? null,
+    killerId,
+    victimId,
+    totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
+    participantCount: counts.participantCount,
+    groupMemberCount: counts.groupMemberCount,
+    rawPayload: event,
+    detailSyncedAt: now,
+  };
+
+  const { allItems, participantInserts } = collectKillEventRelations(event);
+
+  if (existing) {
+    await db
+      .delete(schema.killParticipants)
+      .where(eq(schema.killParticipants.eventId, existing.id));
+    await db.delete(schema.killItems).where(eq(schema.killItems.eventId, existing.id));
+    await db
+      .update(schema.killEvents)
+      .set(eventRow)
+      .where(eq(schema.killEvents.id, existing.id));
+    await persistKillEventRelations(region, existing.id, participantInserts, allItems);
+    return true;
+  }
+
+  const [killEvent] = await db
+    .insert(schema.killEvents)
+    .values({
+      eventId: event.EventId,
+      region,
+      ...eventRow,
+    })
+    .onConflictDoNothing({
+      target: [schema.killEvents.eventId, schema.killEvents.region],
+    })
+    .returning({ id: schema.killEvents.id });
+
+  if (!killEvent) return false;
+
+  await persistKillEventRelations(region, killEvent.id, participantInserts, allItems);
+  return true;
+}
+
+export async function ingestEvent(
+  region: AlbionRegion,
+  event: AlbionEvent,
+  options?: {
+    fetchBattleDetail?: boolean;
+    battleDetailCache?: Map<number, IngestBattleStats>;
+  }
+): Promise<boolean> {
+  return upsertKillEventDetail(region, event, options);
+}
+
+export async function ingestPlayerHistoryEvents(
+  region: AlbionRegion,
+  events: AlbionEvent[]
+): Promise<{ ingested: number; skipped: number; failed: number }> {
+  const uniqueById = new Map<number, AlbionEvent>();
+  for (const event of events) {
+    if (event?.EventId) uniqueById.set(event.EventId, event);
+  }
+
+  let ingested = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const event of uniqueById.values()) {
+    try {
+      const isNew = await ingestEvent(region, event, { fetchBattleDetail: false });
+      if (isNew) ingested += 1;
+      else skipped += 1;
+    } catch (err) {
+      failed += 1;
+      console.error(
+        `[ingest] Failed player history event ${event.EventId} in ${region}:`,
+        err
+      );
+    }
+  }
+
+  return { ingested, skipped, failed };
+}
+
+export async function ensureKillEventInDb(
+  region: AlbionRegion,
+  eventId: number
+): Promise<boolean> {
+  if (!isRegionEnabled(region)) return false;
+  if (await isKillEventCached(region, eventId)) return true;
+
+  try {
+    const client = getAlbionClient();
+    const event = await client.getEvent(region, eventId);
+    await upsertKillEventDetail(region, event);
+    return true;
+  } catch (err) {
+    console.error(
+      `[ingest] Failed to fetch event ${eventId} in ${region}:`,
+      err
+    );
+    return false;
+  }
+}
+
+export async function ingestRegionEvents(region: AlbionRegion): Promise<number> {
+  if (!isRegionEnabled(region)) return 0;
+  const client = getAlbionClient();
+
+  let syncState = await db.query.apiSyncState.findFirst({
+    where: eq(schema.apiSyncState.region, region),
+  });
+
+  if (!syncState) {
+    const [created] = await db
+      .insert(schema.apiSyncState)
+      .values({ region })
+      .returning();
+    syncState = created;
+  }
+
+  try {
+    const events = await client.getRecentEvents(region, 50, 0);
+    let ingested = 0;
+    let eventErrors = 0;
+    const battleDetailCache = new Map<number, IngestBattleStats>();
+
+    for (const event of events) {
+      try {
+        const isNew = await ingestEvent(region, event, { battleDetailCache });
+        if (isNew) ingested++;
+      } catch (err) {
+        eventErrors++;
+        console.error(
+          `[ingest] Failed event ${event.EventId} in ${region}:`,
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    const maxEventId =
+      events.length > 0
+        ? events.reduce(
+            (max, e) => Math.max(max, e.EventId),
+            syncState.lastSeenEventId ?? 0
+          )
+        : syncState.lastSeenEventId ?? 0;
+
+    const warningNote =
+      region === "asia" && events.length === 0
+        ? "Asia events feed returned no data (404 or empty)"
+        : eventErrors > 0
+          ? `${eventErrors} event(s) failed to ingest`
+          : null;
+
+    await db
+      .update(schema.apiSyncState)
+      .set({
+        lastSeenEventId: maxEventId,
+        lastSuccessAt: new Date(),
+        lastIngestAt: new Date(),
+        consecutiveFailures: 0,
+        circuitOpen: 0,
+        lastErrorMessage: warningNote,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.apiSyncState.region, region));
+
+    if (ingested > 0) {
+      await incrementEventsIngested(region, ingested);
+    }
+
+    return ingested;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db
+      .update(schema.apiSyncState)
+      .set({
+        lastErrorAt: new Date(),
+        lastErrorMessage: message,
+        consecutiveFailures: (syncState.consecutiveFailures ?? 0) + 1,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.apiSyncState.region, region));
+    throw err;
+  }
+}
+
+export async function refreshPlayerProfile(
+  region: AlbionRegion,
+  albionId: string
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+  const client = getAlbionClient();
+  const info = await client.getPlayerInfo(region, albionId);
+
+  let guildId: string | null = null;
+  if (info.GuildId && info.GuildName) {
+    guildId = await upsertGuild(region, info);
+  }
+
+  const existing = await db.query.players.findFirst({
+    where: and(
+      eq(schema.players.albionId, albionId),
+      eq(schema.players.region, region)
+    ),
+  });
+
+  const now = new Date();
+  const incomingScalars = {
+    name: info.Name!,
+    guildId,
+    allianceId: info.AllianceId ?? null,
+    allianceName: info.AllianceName ?? null,
+    avatar: info.Avatar ?? null,
+    avatarRing: info.AvatarRing ?? null,
+    killFame: toBigInt(info.KillFame) ?? 0,
+    deathFame: toBigInt(info.DeathFame) ?? 0,
+    fameRatio: info.FameRatio?.toString() ?? null,
+    lifetimeStats: info.LifetimeStatistics ?? null,
+  };
+
+  const { changed } = shouldUpdateEntity(
+    existing ? { rawPayload: existing.lifetimeStats } : null,
+    info.LifetimeStatistics ?? null,
+    existing
+      ? {
+          name: existing.name,
+          guildId: existing.guildId,
+          allianceId: existing.allianceId,
+          allianceName: existing.allianceName,
+          avatar: existing.avatar,
+          avatarRing: existing.avatarRing,
+          killFame: existing.killFame,
+          deathFame: existing.deathFame,
+          fameRatio: existing.fameRatio,
+          lifetimeStats: existing.lifetimeStats,
+        }
+      : {},
+    incomingScalars,
+    [
+      "name",
+      "guildId",
+      "allianceId",
+      "allianceName",
+      "avatar",
+      "avatarRing",
+      "killFame",
+      "deathFame",
+      "fameRatio",
+      "lifetimeStats",
+    ]
+  );
+
+  if (existing && !changed) {
+    await db
+      .update(schema.players)
+      .set({
+        lastSyncedAt: now,
+        lastCheckedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(schema.players.id, existing.id));
+    return;
+  }
+
+  const data = {
+    ...incomingScalars,
+    lastSyncedAt: now,
+    lastCheckedAt: now,
+    updatedAt: now,
+  };
+
+  if (existing) {
+    await db
+      .update(schema.players)
+      .set(data)
+      .where(eq(schema.players.id, existing.id));
+  } else {
+    await db.insert(schema.players).values({
+      albionId,
+      region,
+      ...data,
+    });
+  }
+}
+
+export async function refreshGuildProfile(
+  region: AlbionRegion,
+  guildId: string
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+  const client = getAlbionClient();
+  try {
+    const info = await client.getGuildInfo(region, guildId);
+    if (info) {
+      await upsertGuildFromInfo(region, info);
+    }
+  } catch {
+    // Guild may not exist or API unavailable
+  }
+}
+
+export async function refreshAllianceProfile(
+  region: AlbionRegion,
+  allianceId: string
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+  const client = getAlbionClient();
+  try {
+    const raw = await client.getAllianceInfo(region, allianceId);
+    await upsertAllianceFromInfo(region, raw);
+  } catch {
+    // Alliance may not exist or API unavailable
+  }
+
+  const existing = await db.query.alliances.findFirst({
+    where: and(
+      eq(schema.alliances.albionId, allianceId),
+      eq(schema.alliances.region, region)
+    ),
+    columns: {
+      recentBattlesPayload: true,
+      topBattlesPayload: true,
+      battlesLastSyncedAt: true,
+    },
+  });
+
+  const needRecentBattles = guildBattleListNeedsRefresh(
+    existing?.recentBattlesPayload,
+    existing?.topBattlesPayload,
+    existing?.battlesLastSyncedAt
+  );
+  const needTopBattles = guildBattleListNeedsRefresh(
+    existing?.topBattlesPayload,
+    existing?.recentBattlesPayload,
+    existing?.battlesLastSyncedAt
+  );
+
+  if (!needRecentBattles && !needTopBattles) return;
+
+  const fetches: Array<
+    Promise<
+      | { sort: "recent"; result: Awaited<ReturnType<typeof getAllianceBattlesBySort>> }
+      | { sort: "topfame"; result: Awaited<ReturnType<typeof getAllianceBattlesBySort>> }
+    >
+  > = [];
+
+  if (needRecentBattles) {
+    fetches.push(
+      getAllianceBattlesBySort(region, allianceId, "recent", 10).then(
+        (result) => ({ sort: "recent" as const, result })
+      )
+    );
+  }
+  if (needTopBattles) {
+    fetches.push(
+      getAllianceBattlesBySort(region, allianceId, "topfame", 10).then(
+        (result) => ({ sort: "topfame" as const, result })
+      )
+    );
+  }
+
+  const results = await Promise.all(fetches);
+  const lists: {
+    topBattles?: Awaited<ReturnType<typeof getAllianceBattlesBySort>>["battles"];
+    recentBattles?: Awaited<ReturnType<typeof getAllianceBattlesBySort>>["battles"];
+  } = {};
+
+  for (const entry of results) {
+    if (entry.result.battlesError) continue;
+    if (entry.sort === "recent") lists.recentBattles = entry.result.battles;
+    else lists.topBattles = entry.result.battles;
+  }
+
+  if (lists.topBattles || lists.recentBattles) {
+    await cacheAllianceBattleLists(region, allianceId, lists);
+  }
+
+  try {
+    const fame = await getAllianceFameFromMemberGuilds(region, allianceId);
+    await db
+      .update(schema.alliances)
+      .set({
+        killFame: fame.killFame,
+        deathFame: fame.deathFame,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(schema.alliances.albionId, allianceId),
+          eq(schema.alliances.region, region)
+        )
+      );
+  } catch {
+    // Fame rollup is best-effort
+  }
+}
+
+/** Profile and/or kill/death history — only fetches stale legs. */
+export async function syncPlayerProfile(
+  region: AlbionRegion,
+  albionId: string
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+
+  const existing = await db.query.players.findFirst({
+    where: and(
+      eq(schema.players.albionId, albionId),
+      eq(schema.players.region, region)
+    ),
+    columns: {
+      lastSyncedAt: true,
+      historyLastSyncedAt: true,
+    },
+  });
+
+  const needProfile =
+    !existing ||
+    !existing.lastSyncedAt ||
+    isSyncStale(existing.lastSyncedAt);
+  const needHistory =
+    !existing ||
+    !existing.historyLastSyncedAt ||
+    isSyncStale(existing.historyLastSyncedAt);
+
+  if (needProfile) {
+    await refreshPlayerProfile(region, albionId);
+  }
+
+  if (needHistory) {
+    const { kills, deaths } = await fetchPlayerHistoryFromApi(region, albionId);
+    await ingestPlayerHistoryEvents(region, [...kills, ...deaths]);
+
+    const now = new Date();
+    await db
+      .update(schema.players)
+      .set({ historyLastSyncedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.players.albionId, albionId),
+          eq(schema.players.region, region)
+        )
+      );
+  }
+}
+
+/** Guild info and/or top kills + top battles — only fetches stale legs unless forced. */
+export async function syncGuildProfile(
+  region: AlbionRegion,
+  guildId: string,
+  options?: { force?: boolean }
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+
+  const force = options?.force === true;
+  const existing = await db.query.guilds.findFirst({
+    where: and(
+      eq(schema.guilds.albionId, guildId),
+      eq(schema.guilds.region, region)
+    ),
+    columns: {
+      lastSyncedAt: true,
+      historyLastSyncedAt: true,
+      battlesLastSyncedAt: true,
+      recentBattlesPayload: true,
+      topBattlesPayload: true,
+    },
+  });
+
+  const needProfile =
+    force ||
+    !existing ||
+    !existing.lastSyncedAt ||
+    isSyncStale(existing.lastSyncedAt);
+  const needHistory =
+    force ||
+    !existing ||
+    !existing.historyLastSyncedAt ||
+    isSyncStale(existing.historyLastSyncedAt);
+  const needRecentBattles =
+    force ||
+    !existing ||
+    guildBattleListNeedsRefresh(
+      existing?.recentBattlesPayload,
+      existing?.topBattlesPayload,
+      existing?.battlesLastSyncedAt,
+      { force }
+    );
+  const needTopBattles =
+    force ||
+    !existing ||
+    guildBattleListNeedsRefresh(
+      existing?.topBattlesPayload,
+      existing?.recentBattlesPayload,
+      existing?.battlesLastSyncedAt,
+      { force }
+    );
+  const needBattles = needRecentBattles || needTopBattles;
+
+  if (needProfile) {
+    await refreshGuildProfile(region, guildId);
+  }
+
+  if (needHistory) {
+    const client = getAlbionClient();
+    const topKills = await client
+      .getGuildTopKills(region, guildId, { limit: 10 })
+      .catch(() => []);
+    await ingestPlayerHistoryEvents(region, topKills);
+
+    const now = new Date();
+    await db
+      .update(schema.guilds)
+      .set({ historyLastSyncedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(schema.guilds.albionId, guildId),
+          eq(schema.guilds.region, region)
+        )
+      );
+  }
+
+  if (needBattles) {
+    const fetches: Array<
+      Promise<
+        | { sort: "recent"; result: Awaited<ReturnType<typeof getGuildBattlesBySort>> }
+        | { sort: "topfame"; result: Awaited<ReturnType<typeof getGuildBattlesBySort>> }
+      >
+    > = [];
+
+    if (needRecentBattles) {
+      fetches.push(
+        getGuildBattlesBySort(region, guildId, "recent", 10).then((result) => ({
+          sort: "recent" as const,
+          result,
+        }))
+      );
+    }
+    if (needTopBattles) {
+      fetches.push(
+        getGuildBattlesBySort(region, guildId, "topfame", 10).then((result) => ({
+          sort: "topfame" as const,
+          result,
+        }))
+      );
+    }
+
+    const results = await Promise.all(fetches);
+    const now = new Date();
+    const updates: {
+      topBattlesPayload?: ReturnType<typeof wrapGuildBattleListCache>;
+      recentBattlesPayload?: ReturnType<typeof wrapGuildBattleListCache>;
+      battlesLastSyncedAt?: Date;
+      updatedAt: Date;
+    } = { updatedAt: now };
+
+    let recentFetchOk = !needRecentBattles;
+    let topFetchOk = !needTopBattles;
+
+    for (const entry of results) {
+      if (entry.sort === "recent") {
+        if (!entry.result.battlesError) {
+          updates.recentBattlesPayload = wrapGuildBattleListCache(
+            entry.result.battles
+          );
+          recentFetchOk = true;
+        }
+      } else if (!entry.result.battlesError) {
+        updates.topBattlesPayload = wrapGuildBattleListCache(
+          entry.result.battles
+        );
+        topFetchOk = true;
+      }
+    }
+
+    const finalRecentPayload =
+      updates.recentBattlesPayload ?? existing?.recentBattlesPayload;
+    const finalTopPayload =
+      updates.topBattlesPayload ?? existing?.topBattlesPayload;
+
+    if (
+      recentFetchOk &&
+      topFetchOk &&
+      isGuildBattleCacheComplete(finalRecentPayload, finalTopPayload)
+    ) {
+      updates.battlesLastSyncedAt = now;
+    }
+
+    if (updates.topBattlesPayload || updates.recentBattlesPayload) {
+      await db
+        .update(schema.guilds)
+        .set(updates)
+        .where(
+          and(
+            eq(schema.guilds.albionId, guildId),
+            eq(schema.guilds.region, region)
+          )
+        );
+    }
+  }
+}
+
+/** @deprecated Prefer syncPlayerProfile — kept for in-flight legacy jobs. */
+export async function backfillPlayerHistory(
+  region: AlbionRegion,
+  albionId: string
+): Promise<void> {
+  await syncPlayerProfile(region, albionId);
+}
+
+/** @deprecated Prefer syncGuildProfile — kept for in-flight legacy jobs. */
+export async function backfillGuildTopKills(
+  region: AlbionRegion,
+  guildId: string
+): Promise<void> {
+  await syncGuildProfile(region, guildId);
+}
+
+export async function ensureSyncStates() {
+  for (const region of ENABLED_REGIONS) {
+    const existing = await db.query.apiSyncState.findFirst({
+      where: eq(schema.apiSyncState.region, region),
+    });
+    if (!existing) {
+      await db.insert(schema.apiSyncState).values({ region });
+    }
+  }
+}
+
+/**
+ * Poll Albion recent battles, keep fame > 0 and players ≥ threshold,
+ * upsert into local `battles`, and queue detail sync when needed.
+ */
+export async function ingestRecentBattles(region: AlbionRegion): Promise<{
+  fetched: number;
+  kept: number;
+}> {
+  if (!isRegionEnabled(region)) return { fetched: 0, kept: 0 };
+
+  const client = getAlbionClient();
+  const battles = await client.getBattlesRaw(region, {
+    sort: "recent",
+    limit: RECENT_BATTLES_POLL_LIMIT,
+    offset: 0,
+  });
+
+  let kept = 0;
+
+  for (const battle of battles) {
+    const albionBattleId = battle.id ?? battle.albionId;
+    if (albionBattleId == null) continue;
+
+    const fame = battle.totalFame ?? 0;
+    const players =
+      battle.totalPlayers ??
+      (battle.players ? Object.keys(battle.players).length : 0);
+
+    if (fame <= RECENT_BATTLES_MIN_FAME || players < RECENT_BATTLES_MIN_PLAYERS) {
+      continue;
+    }
+
+    await upsertBattleFromRecentList(region, battle);
+    kept++;
+
+    try {
+      await ensureBattleDetailQueued(region, albionBattleId);
+    } catch (err) {
+      console.error(
+        `[ingest] Failed to queue battle detail sync for ${region}/${albionBattleId}:`,
+        err
+      );
+    }
+  }
+
+  console.log(
+    `[ingest] ${region} recent battles: fetched=${battles.length} kept=${kept}`
+  );
+
+  return { fetched: battles.length, kept };
+}

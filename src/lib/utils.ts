@@ -1,0 +1,29 @@
+/** Shared formatting helpers used by ingest workers and the web app. */
+
+export function formatFame(value: number | null | undefined): string {
+  if (value == null) return "0";
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}b`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return value.toLocaleString();
+}
+
+export function regionLabel(region: string): string {
+  const labels: Record<string, string> = {
+    americas: "Americas",
+    europe: "Europe",
+    asia: "Asia",
+  };
+  return labels[region] ?? region;
+}
+
+/** Albion API returns fame/healing as floats or decimal strings; DB columns are bigint. */
+export function toBigInt(value: number | string | null | undefined): number | null {
+  if (value == null || value === "") return null;
+  const n =
+    typeof value === "number"
+      ? value
+      : parseFloat(String(value).replace(/,/g, ""));
+  if (Number.isNaN(n)) return null;
+  return Math.round(n);
+}

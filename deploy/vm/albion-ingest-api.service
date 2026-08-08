@@ -1,0 +1,22 @@
+[Unit]
+Description=Albion Kill Tracker — Ingest HTTP API (job triggers for Vercel)
+After=docker.service network-online.target albion-worker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=albion
+Group=albion
+WorkingDirectory=/opt/aotracker/ingest
+EnvironmentFile=/opt/aotracker/ingest/.env
+ExecStart=/usr/bin/npm run api
+Restart=always
+RestartSec=5
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

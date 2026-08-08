@@ -1,0 +1,36 @@
+{
+  "name": "ingest",
+  "private": true,
+  "description": "Background workers and VM maintenance — never deploy to Vercel",
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file=.env scripts/start.ts",
+    "worker": "tsx --env-file=.env src/worker.ts all",
+    "worker:process": "tsx --env-file=.env src/worker.ts process",
+    "worker:process:loop": "tsx --env-file=.env src/worker.ts process",
+    "worker:scheduler": "tsx --env-file=.env src/worker.ts scheduler",
+    "worker:scheduler:loop": "tsx --env-file=.env src/worker.ts scheduler",
+    "jobs:process": "npm run worker:process",
+    "jobs:process:loop": "npm run worker:process:loop",
+    "jobs:ingest": "tsx --env-file=.env scripts/run-ingest-once.ts",
+    "jobs:ingest:loop": "npm run worker:scheduler:loop",
+    "jobs:health": "tsx --env-file=.env scripts/run-health-once.ts",
+    "jobs:health:loop": "npm run worker:scheduler:loop",
+    "jobs:queue-top-guilds": "tsx --env-file=.env scripts/queue-top-guilds-from-events.ts",
+    "db:evict-battle-details": "tsx --env-file=.env scripts/evict-stale-battle-details.ts",
+    "api": "tsx --env-file=.env src/server.ts"
+  },
+  "dependencies": {
+    "bullmq": "^5.34.0",
+    "drizzle-orm": "^0.38.3",
+    "express": "^4.21.2",
+    "ioredis": "^5.4.2",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
