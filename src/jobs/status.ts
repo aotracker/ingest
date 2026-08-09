@@ -8,6 +8,12 @@ import {
   entityResolveDedupeKey,
   type EntityResolveType,
 } from "../entity-resolve";
+import {
+  liveSearchDedupeKey,
+  normalizeLiveSearchQuery,
+  normalizeLiveSearchRegions,
+  type LiveSearchResult,
+} from "../live-search";
 import { ALL_JOB_QUEUES, queueForJobQueue } from "./queues";
 import { toLegacyJobState, type JobPayload } from "./types";
 
@@ -315,6 +321,58 @@ export async function getQueueStatuses(): Promise<{
   }
 }
 
+export interface LiveSearchJobInfo {
+  state: string | null;
+  playersFound: number | null;
+  guildsFound: number | null;
+  regionsSearched: AlbionRegion[];
+  lastError: string | null;
+}
+
+export async function getLiveSearchJobInfo(
+  query: string,
+  regions?: AlbionRegion[]
+): Promise<LiveSearchJobInfo> {
+  const trimmed = normalizeLiveSearchQuery(query);
+  const searchRegions = normalizeLiveSearchRegions(regions);
+  const empty: LiveSearchJobInfo = {
+    state: null,
+    playersFound: null,
+    guildsFound: null,
+    regionsSearched: searchRegions,
+    lastError: null,
+  };
+
+  if (!trimmed) return empty;
+
+  const dedupeKey = liveSearchDedupeKey(trimmed, searchRegions);
+  const queue = queueForJobQueue("refresh");
+  const job = (await queue.getJob(dedupeKey)) as Job<JobPayload> | null;
+
+  if (!job) return empty;
+
+  const state = await job.getState();
+  const delayedUntil =
+    typeof job.timestamp === "number" && typeof job.delay === "number"
+      ? job.timestamp + job.delay
+      : job.processedOn ?? null;
+  const legacyState = toLegacyJobState(state, delayedUntil);
+  const returnValue = job.returnvalue as LiveSearchResult | undefined;
+
+  return {
+    state: legacyState,
+    playersFound:
+      typeof returnValue?.playersFound === "number"
+        ? returnValue.playersFound
+        : null,
+    guildsFound:
+      typeof returnValue?.guildsFound === "number" ? returnValue.guildsFound : null,
+    regionsSearched: returnValue?.regionsSearched ?? searchRegions,
+    lastError:
+      typeof job.failedReason === "string" ? job.failedReason : null,
+  };
+}
+
 export interface EntityResolveJobInfo {
   state: string | null;
   albionId: string | null;
@@ -359,10 +417,12 @@ export {
   ensureKillEventQueued,
   ensureBattleDetailQueued,
   ensureEntityResolveQueued,
+  ensureLiveSearchQueued,
   getPlayerSyncJobState,
   getGuildSyncJobState,
   getAllianceRefreshJobState,
   getEntityResolveJobState,
+  getLiveSearchJobState,
   getKillEventIngestJobState,
   getBattleSyncJobState,
   requeueBattleDetail,

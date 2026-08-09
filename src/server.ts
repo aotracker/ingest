@@ -8,6 +8,7 @@ import {
   ensureKillEventQueued,
   ensureBattleDetailQueued,
   ensureEntityResolveQueued,
+  ensureLiveSearchQueued,
   requeueBattleDetail,
   getPlayerSyncJobState,
   getGuildSyncJobState,
@@ -17,6 +18,7 @@ import {
 import {
   getBattleSyncJobInfo,
   getEntityResolveJobInfo,
+  getLiveSearchJobInfo,
   getQueueStatuses,
 } from "./jobs/status";
 
@@ -56,6 +58,24 @@ function parseEntityType(
   value: unknown
 ): "player" | "guild" | null {
   if (value === "player" || value === "guild") return value;
+  return null;
+}
+
+function parseRegions(value: unknown): AlbionRegion[] | null {
+  if (Array.isArray(value)) {
+    const regions = value.filter(
+      (item): item is AlbionRegion =>
+        typeof item === "string" && isRegionEnabled(item)
+    );
+    return regions.length > 0 ? regions : null;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const regions = value
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part): part is AlbionRegion => isRegionEnabled(part));
+    return regions.length > 0 ? regions : null;
+  }
   return null;
 }
 
@@ -135,6 +155,30 @@ app.post("/jobs/battle-sync", async (req, res) => {
     });
   }
   res.json({ ok: true });
+});
+
+app.post("/jobs/live-search", async (req, res) => {
+  const query = req.body?.query ?? req.body?.q ?? req.body?.searchQuery;
+  const regions = parseRegions(req.body?.regions ?? req.body?.searchRegions);
+  if (typeof query !== "string" || !query.trim()) {
+    res.status(400).json({ error: "query is required" });
+    return;
+  }
+  await ensureLiveSearchQueued(query, regions ?? undefined, {
+    immediate: req.body?.immediate === true,
+  });
+  res.json({ ok: true });
+});
+
+app.get("/jobs/live-search/state", async (req, res) => {
+  const query = req.query.q ?? req.query.query;
+  const regions = parseRegions(req.query.regions);
+  if (typeof query !== "string" || !query.trim()) {
+    res.status(400).json({ error: "q is required" });
+    return;
+  }
+  const info = await getLiveSearchJobInfo(query, regions ?? undefined);
+  res.json(info);
 });
 
 app.post("/jobs/entity-resolve", async (req, res) => {

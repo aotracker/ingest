@@ -10,6 +10,7 @@ import {
   markBattleDetailUnavailable,
 } from "@aotracker/core/db/battle-cache";
 import { resolveEntityByName } from "./entity-resolve";
+import { runLiveSearch } from "./live-search";
 import {
   ensureKillEventInDb,
   refreshAllianceProfile,
@@ -55,6 +56,12 @@ export async function executeJob(
       }
       await refreshAllianceProfile(payload.region, payload.allianceId);
       return;
+    }
+    case "live-search": {
+      if (!payload.searchQuery?.trim()) {
+        throw new Error("live-search requires searchQuery");
+      }
+      return runLiveSearch(payload.searchQuery, payload.searchRegions);
     }
     case "entity-resolve": {
       if (

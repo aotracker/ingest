@@ -17,6 +17,8 @@ export type JobPayload = {
   allianceId?: string;
   entityType?: EntityResolveType;
   entityName?: string;
+  searchQuery?: string;
+  searchRegions?: AlbionRegion[];
   eventId?: number;
   battleId?: number;
   /** When true, sync-guild refreshes profile, top kills, and top battles. */

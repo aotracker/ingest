@@ -29,6 +29,11 @@ import {
   entityResolveDedupeKey,
   type EntityResolveType,
 } from "../entity-resolve";
+import {
+  liveSearchDedupeKey,
+  normalizeLiveSearchQuery,
+  normalizeLiveSearchRegions,
+} from "../live-search";
 
 export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
   const queue = queueForJobQueue(input.queue);
@@ -155,6 +160,56 @@ function guildSyncDedupeKeys(region: AlbionRegion, guildId: string): string[] {
     `refresh-guild-${region}-${guildId}`,
     `backfill-guild-top-kills-${region}-${guildId}`,
   ];
+}
+
+const LIVE_SEARCH_MIN_QUERY_LENGTH = 2;
+
+export async function ensureLiveSearchQueued(
+  query: string,
+  regions?: AlbionRegion[],
+  options?: { immediate?: boolean }
+): Promise<void> {
+  const trimmed = normalizeLiveSearchQuery(query);
+  if (trimmed.length < LIVE_SEARCH_MIN_QUERY_LENGTH) return;
+
+  const searchRegions = normalizeLiveSearchRegions(regions);
+  if (searchRegions.length === 0) return;
+
+  const dedupeKey = liveSearchDedupeKey(trimmed, searchRegions);
+  const immediate = options?.immediate === true;
+  const existingState = await getJobStateByDedupeKey(dedupeKey);
+
+  if (isInProgressState(existingState)) {
+    if (immediate) await promotePendingJob(dedupeKey);
+    return;
+  }
+
+  if (existingState === "completed") {
+    return;
+  }
+
+  await enqueueJob({
+    dedupeKey,
+    queue: QUEUE_NAMES.REFRESH,
+    name: "live-search",
+    payload: {
+      searchQuery: trimmed,
+      searchRegions,
+      ...(immediate ? { userPromoted: true } : {}),
+    },
+    delayMs: immediate ? 0 : WARM_SYNC_DELAY_MS,
+  });
+}
+
+export async function getLiveSearchJobState(
+  query: string,
+  regions?: AlbionRegion[]
+): Promise<string | null> {
+  const trimmed = normalizeLiveSearchQuery(query);
+  if (!trimmed) return null;
+  return getJobStateByDedupeKey(
+    liveSearchDedupeKey(trimmed, normalizeLiveSearchRegions(regions))
+  );
 }
 
 export async function ensureEntityResolveQueued(
