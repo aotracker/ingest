@@ -24,10 +24,11 @@
 ## Setup on the VM
 
 ```bash
-# From repo root
+cd /home/ubuntu/ingest
+git clone https://github.com/aotracker/ingest.git .
 npm ci
-cp ingest/.env.example ingest/.env   # DATABASE_URL, REDIS_URL, INGEST_API_SECRET
-cd ingest && npm run start           # HTTP API + workers
+cp .env.example .env   # DATABASE_URL, REDIS_URL, INGEST_API_SECRET
+npm run start          # HTTP API + workers (local dev)
 ```
 
 Production: use systemd — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPLOY.md](../DEPLOY.md).

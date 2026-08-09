@@ -1,6 +1,6 @@
 /**
  * Evict heavy battle JSON for battles ended >30 days ago (stub columns kept).
- * Droplet maintenance — run from ingest/, not Vercel.
+ * OVH VM maintenance — run from ingest/, not Vercel.
  */
 import {
   BATTLE_DETAIL_EVICT_AFTER_DAYS,

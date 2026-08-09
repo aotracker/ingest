@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=albion
-Group=albion
-WorkingDirectory=/opt/aotracker/ingest
-EnvironmentFile=/opt/aotracker/ingest/.env
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ingest
+EnvironmentFile=/home/ubuntu/ingest/.env
 ExecStart=/usr/bin/npm run api
 Restart=always
 RestartSec=5
