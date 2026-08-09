@@ -1,27 +1,28 @@
 # OVH VM — BullMQ workers + HTTP API
 
-Workers and the ingest HTTP API run from **`ingest/`** using Redis + BullMQ. The Next.js app runs on **Vercel** from `client/` only and triggers jobs via HTTP (not Redis).
+Workers and the ingest HTTP API run from **`/home/ubuntu/ingest`** using Redis + BullMQ. The Next.js app runs on **Vercel** from `client/` only and triggers jobs via HTTP (not Redis).
 
 ## Prerequisites on the VM
 
+- Ubuntu 24.04 LTS (default `ubuntu` user)
 - Node.js 20+
-- PostgreSQL (app data)
-- Redis (BullMQ, localhost only)
-- Repo cloned e.g. `/opt/aotracker`
+- PostgreSQL + Redis (Docker at `/opt/albion-postgres/`)
+- Ingest repo cloned to `/home/ubuntu/ingest`
 
 ```bash
-cd /opt/aotracker
+cd /home/ubuntu/ingest
+git clone https://github.com/aotracker/ingest.git .
 npm ci
-cp ingest/.env.example ingest/.env
-# Edit: DATABASE_URL, REDIS_URL, DISABLED_REGIONS, INGEST_API_SECRET
+cp .env.example .env
+# Edit: DATABASE_URL, REDIS_URL, DISABLED_REGIONS, INGEST_API_SECRET, INGEST_API_PORT
 ```
 
 ## systemd — main worker
 
 ```bash
-cp /opt/aotracker/ingest/deploy/vm/albion-worker.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now albion-worker
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now albion-worker
 journalctl -u albion-worker -f
 ```
 
@@ -32,27 +33,36 @@ journalctl -u albion-worker -f
 Vercel calls this API to enqueue jobs and read queue status.
 
 ```bash
-cp /opt/aotracker/ingest/deploy/vm/albion-ingest-api.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now albion-ingest-api
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-ingest-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now albion-ingest-api
 journalctl -u albion-ingest-api -f
 ```
 
-Set `INGEST_API_PORT` (default `3001`) and `INGEST_API_SECRET` in `ingest/.env`. Use the same secret as `INGEST_API_SECRET` on Vercel.
+Set `INGEST_API_PORT` (default `3001`) and `INGEST_API_SECRET` in `/home/ubuntu/ingest/.env`. Use the same secret as `INGEST_API_SECRET` on Vercel.
 
 ### Optional per-region processors
 
 ```bash
-cp /opt/aotracker/ingest/deploy/vm/albion-worker-process@.service /etc/systemd/system/
-systemctl enable --now albion-worker-process@americas albion-worker-process@europe
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-worker-process@.service /etc/systemd/system/
+sudo systemctl enable --now albion-worker-process@americas albion-worker-process@europe
 ```
 
 ## Battle detail eviction (weekly)
 
 ```bash
-cp /opt/aotracker/ingest/deploy/vm/albion-battle-evict.service /etc/systemd/system/
-cp /opt/aotracker/ingest/deploy/vm/albion-battle-evict.timer /etc/systemd/system/
-systemctl enable --now albion-battle-evict.timer
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-battle-evict.service /etc/systemd/system/
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-battle-evict.timer /etc/systemd/system/
+sudo systemctl enable --now albion-battle-evict.timer
+```
+
+## Deploy updates
+
+```bash
+cd /home/ubuntu/ingest
+git fetch origin && git reset --hard origin/main
+npm ci
+sudo systemctl restart albion-worker albion-ingest-api
 ```
 
 ## Vercel connection
@@ -77,6 +87,4 @@ npm run worker    # BullMQ workers
 npm run api       # HTTP API (separate terminal)
 ```
 
-Postgres + Redis: `docker compose -f deploy/docker-compose.yml up -d` (from repo root)
-
-Icon cache maintenance runs on the VM — see [deploy/vm/README.md](../../deploy/vm/README.md).
+Postgres + Redis: `docker compose -f deploy/docker-compose.yml up -d` (from monorepo root on your dev machine)
