@@ -4,6 +4,10 @@ import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { db, schema } from "@aotracker/core/db";
 import { getBattleByAlbionId } from "@aotracker/core/db/battle-cache";
 import { BATTLE_API_DELAY_NOTICE_MS } from "./constants";
+import {
+  entityResolveDedupeKey,
+  type EntityResolveType,
+} from "../entity-resolve";
 import { ALL_JOB_QUEUES, queueForJobQueue } from "./queues";
 import { toLegacyJobState, type JobPayload } from "./types";
 
@@ -311,15 +315,54 @@ export async function getQueueStatuses(): Promise<{
   }
 }
 
+export interface EntityResolveJobInfo {
+  state: string | null;
+  albionId: string | null;
+  lastError: string | null;
+}
+
+export async function getEntityResolveJobInfo(
+  region: AlbionRegion,
+  entityType: EntityResolveType,
+  name: string
+): Promise<EntityResolveJobInfo> {
+  const dedupeKey = entityResolveDedupeKey(region, entityType, name.trim());
+  const queue = queueForJobQueue("refresh");
+  const job = (await queue.getJob(dedupeKey)) as Job<JobPayload> | null;
+
+  if (!job) {
+    return { state: null, albionId: null, lastError: null };
+  }
+
+  const state = await job.getState();
+  const delayedUntil =
+    typeof job.timestamp === "number" && typeof job.delay === "number"
+      ? job.timestamp + job.delay
+      : job.processedOn ?? null;
+  const legacyState = toLegacyJobState(state, delayedUntil);
+  const returnValue = job.returnvalue as { albionId?: string } | undefined;
+  const albionId =
+    typeof returnValue?.albionId === "string" ? returnValue.albionId : null;
+
+  return {
+    state: legacyState,
+    albionId,
+    lastError:
+      typeof job.failedReason === "string" ? job.failedReason : null,
+  };
+}
+
 export {
   ensurePlayerSyncQueued,
   ensureGuildSyncQueued,
   ensureAllianceRefreshQueued,
   ensureKillEventQueued,
   ensureBattleDetailQueued,
+  ensureEntityResolveQueued,
   getPlayerSyncJobState,
   getGuildSyncJobState,
   getAllianceRefreshJobState,
+  getEntityResolveJobState,
   getKillEventIngestJobState,
   getBattleSyncJobState,
   requeueBattleDetail,

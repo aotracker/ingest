@@ -12,6 +12,7 @@ export const JOB_TIMEOUT_MS: Record<string, number> = {
   "refresh-guild": 180_000,
   "backfill-guild-top-kills": 180_000,
   "refresh-alliance": 180_000,
+  "entity-resolve": 30_000,
   "ingest-event": 120_000,
 };
 

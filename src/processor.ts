@@ -120,7 +120,7 @@ export interface ProcessorOptions {
 export async function processBullJob(
   job: Job<JobPayload>,
   options?: ProcessorOptions
-): Promise<void> {
+): Promise<unknown> {
   const payload = job.data ?? {};
   const preferRegion = options?.preferRegion;
   const regionOnly = options?.regionOnly === true;
@@ -136,7 +136,7 @@ export async function processBullJob(
 
   const timeoutMs = jobTimeoutMs(job.name);
   try {
-    await withTimeout(executeJob(job.name, payload), timeoutMs, job.name);
+    return await withTimeout(executeJob(job.name, payload), timeoutMs, job.name);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {

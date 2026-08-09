@@ -25,6 +25,10 @@ import {
   type EnqueueJobInput,
   type JobPayload,
 } from "./types";
+import {
+  entityResolveDedupeKey,
+  type EntityResolveType,
+} from "../entity-resolve";
 
 export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
   const queue = queueForJobQueue(input.queue);
@@ -151,6 +155,37 @@ function guildSyncDedupeKeys(region: AlbionRegion, guildId: string): string[] {
     `refresh-guild-${region}-${guildId}`,
     `backfill-guild-top-kills-${region}-${guildId}`,
   ];
+}
+
+export async function ensureEntityResolveQueued(
+  region: AlbionRegion,
+  entityType: EntityResolveType,
+  name: string,
+  options?: { immediate?: boolean }
+): Promise<void> {
+  if (!isRegionEnabled(region)) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  const dedupeKey = entityResolveDedupeKey(region, entityType, trimmed);
+  const immediate = options?.immediate === true;
+  if (isInProgressState(await getJobStateByDedupeKey(dedupeKey))) {
+    if (immediate) await promotePendingJob(dedupeKey);
+    return;
+  }
+
+  await enqueueJob({
+    dedupeKey,
+    queue: QUEUE_NAMES.REFRESH,
+    name: "entity-resolve",
+    payload: {
+      region,
+      entityType,
+      entityName: trimmed,
+      ...(immediate ? { userPromoted: true } : {}),
+    },
+    delayMs: immediate ? 0 : WARM_SYNC_DELAY_MS,
+  });
 }
 
 export async function ensurePlayerSyncQueued(
@@ -387,6 +422,16 @@ export async function getAllianceRefreshJobState(
   allianceId: string
 ): Promise<string | null> {
   return getJobStateByDedupeKey(`refresh-alliance-${region}-${allianceId}`);
+}
+
+export async function getEntityResolveJobState(
+  region: AlbionRegion,
+  entityType: EntityResolveType,
+  name: string
+): Promise<string | null> {
+  return getJobStateByDedupeKey(
+    entityResolveDedupeKey(region, entityType, name.trim())
+  );
 }
 
 export async function getKillEventIngestJobState(

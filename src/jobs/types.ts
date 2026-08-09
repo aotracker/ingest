@@ -8,11 +8,15 @@ export const QUEUE_NAMES = {
 
 export type JobQueue = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
 
+export type EntityResolveType = "player" | "guild";
+
 export type JobPayload = {
   region?: AlbionRegion;
   albionId?: string;
   guildId?: string;
   allianceId?: string;
+  entityType?: EntityResolveType;
+  entityName?: string;
   eventId?: number;
   battleId?: number;
   /** When true, sync-guild refreshes profile, top kills, and top battles. */

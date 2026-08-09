@@ -9,6 +9,7 @@ import {
   getBattleByAlbionId,
   markBattleDetailUnavailable,
 } from "@aotracker/core/db/battle-cache";
+import { resolveEntityByName } from "./entity-resolve";
 import {
   ensureKillEventInDb,
   refreshAllianceProfile,
@@ -16,7 +17,10 @@ import {
   syncPlayerProfile,
 } from "./ingest";
 
-export async function executeJob(name: string, payload: JobPayload): Promise<void> {
+export async function executeJob(
+  name: string,
+  payload: JobPayload
+): Promise<unknown> {
   switch (name) {
     case "ingest-event": {
       if (!payload.region || payload.eventId == null) {
@@ -51,6 +55,26 @@ export async function executeJob(name: string, payload: JobPayload): Promise<voi
       }
       await refreshAllianceProfile(payload.region, payload.allianceId);
       return;
+    }
+    case "entity-resolve": {
+      if (
+        !payload.region ||
+        !payload.entityType ||
+        !payload.entityName?.trim()
+      ) {
+        throw new Error("entity-resolve requires region, entityType, and entityName");
+      }
+      const result = await resolveEntityByName(
+        payload.region,
+        payload.entityType,
+        payload.entityName.trim()
+      );
+      if (!result) {
+        throw new Error(
+          `No exact ${payload.entityType} match for "${payload.entityName}" in ${payload.region}`
+        );
+      }
+      return result;
     }
     case "sync-battle": {
       if (!payload.region || payload.battleId == null) {

@@ -7,6 +7,7 @@ import {
   ensureAllianceRefreshQueued,
   ensureKillEventQueued,
   ensureBattleDetailQueued,
+  ensureEntityResolveQueued,
   requeueBattleDetail,
   getPlayerSyncJobState,
   getGuildSyncJobState,
@@ -15,6 +16,7 @@ import {
 } from "./jobs/enqueue";
 import {
   getBattleSyncJobInfo,
+  getEntityResolveJobInfo,
   getQueueStatuses,
 } from "./jobs/status";
 
@@ -48,6 +50,13 @@ function verifyAuth(req: Request, res: Response, next: NextFunction): void {
 function parseRegion(value: unknown): AlbionRegion | null {
   if (typeof value !== "string" || !isRegionEnabled(value)) return null;
   return value as AlbionRegion;
+}
+
+function parseEntityType(
+  value: unknown
+): "player" | "guild" | null {
+  if (value === "player" || value === "guild") return value;
+  return null;
 }
 
 const app = express();
@@ -128,6 +137,22 @@ app.post("/jobs/battle-sync", async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post("/jobs/entity-resolve", async (req, res) => {
+  const region = parseRegion(req.body?.region);
+  const entityType = parseEntityType(req.body?.type ?? req.body?.entityType);
+  const name = req.body?.name ?? req.body?.entityName;
+  if (!region || !entityType || typeof name !== "string" || !name.trim()) {
+    res.status(400).json({
+      error: "region, type (player|guild), and name are required",
+    });
+    return;
+  }
+  await ensureEntityResolveQueued(region, entityType, name, {
+    immediate: req.body?.immediate === true,
+  });
+  res.json({ ok: true });
+});
+
 app.post("/jobs/scheduler/ingest-poll", async (_req, res) => {
   const jobId = await triggerSchedulerJob("ingest-poll");
   res.json({ ok: true, jobId });
@@ -181,6 +206,21 @@ app.get("/jobs/alliance-refresh/:region/:allianceId/state", async (req, res) => 
   const state = await getAllianceRefreshJobState(region, allianceId);
   res.json({ state });
 });
+
+app.get(
+  "/jobs/entity-resolve/:region/:type/:name/state",
+  async (req, res) => {
+    const region = parseRegion(req.params.region);
+    const entityType = parseEntityType(req.params.type);
+    const name = decodeURIComponent(req.params.name ?? "");
+    if (!region || !entityType || !name.trim()) {
+      res.status(400).json({ error: "Invalid region, type, or name" });
+      return;
+    }
+    const info = await getEntityResolveJobInfo(region, entityType, name);
+    res.json(info);
+  }
+);
 
 app.get("/jobs/queues", async (_req, res) => {
   const snapshot = await getQueueStatuses();
