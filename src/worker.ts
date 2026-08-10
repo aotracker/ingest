@@ -76,7 +76,7 @@ async function registerRepeatableJobs(): Promise<void> {
     "ingest-poll",
     {},
     {
-      repeat: { every: INGEST_LOOP_MS },
+      repeat: { every: INGEST_LOOP_MS, immediately: true },
       jobId: "repeat-ingest-poll",
     }
   );
@@ -98,6 +98,7 @@ async function startSchedulerWorker(): Promise<Worker> {
     async (job) => {
       if (job.name === "ingest-poll") {
         try {
+          console.log("[worker] Ingest poll starting");
           await runIngestPoll();
           await recordWorkerRunSuccess("ingest", { task: "ingest", source });
           console.log("[worker] Ingest poll complete");
