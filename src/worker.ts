@@ -22,6 +22,9 @@ import { recordOpsEvent } from "@aotracker/core/ops/events";
 /** Discovery poll interval — recent events + recent battles per enabled region. */
 const INGEST_LOOP_MS = 12 * 60 * 1000;
 const HEALTH_LOOP_MS = 5 * 60 * 1000;
+/** Ingest poll can run longer than the repeat interval; BullMQ default lock is 30s. */
+const SCHEDULER_LOCK_MS = INGEST_LOOP_MS + 8 * 60 * 1000;
+const SCHEDULER_LOCK_RENEW_MS = 60 * 1000;
 
 const args = process.argv.slice(2);
 const mode = args.find((arg) => !arg.startsWith("-")) ?? "process";
@@ -121,6 +124,8 @@ async function startSchedulerWorker(): Promise<Worker> {
     {
       connection: createRedisConnection(),
       concurrency: 1,
+      lockDuration: SCHEDULER_LOCK_MS,
+      lockRenewTime: SCHEDULER_LOCK_RENEW_MS,
     }
   );
 
