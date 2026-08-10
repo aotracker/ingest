@@ -1389,8 +1389,8 @@ export async function ensureSyncStates() {
 }
 
 /**
- * Poll Albion recent battles, keep fame > 0 and players ≥ threshold,
- * upsert into local `battles`, and queue detail sync when needed.
+ * Poll Albion recent battles: upsert all list rows for player-count cache (event ingest),
+ * then queue detail sync only for fame > 0 and players ≥ threshold.
  */
 export async function ingestRecentBattles(region: AlbionRegion): Promise<{
   fetched: number;
@@ -1411,6 +1411,8 @@ export async function ingestRecentBattles(region: AlbionRegion): Promise<{
     const albionBattleId = battle.id ?? battle.albionId;
     if (albionBattleId == null) continue;
 
+    await upsertBattleFromRecentList(region, battle);
+
     const fame = battle.totalFame ?? 0;
     const players =
       battle.totalPlayers ??
@@ -1420,7 +1422,6 @@ export async function ingestRecentBattles(region: AlbionRegion): Promise<{
       continue;
     }
 
-    await upsertBattleFromRecentList(region, battle);
     kept++;
 
     try {
