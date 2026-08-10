@@ -62,8 +62,38 @@ sudo systemctl enable --now albion-battle-evict.timer
 cd /home/ubuntu/ingest
 git fetch origin && git reset --hard origin/main
 npm ci
+npm run db:apply-pending
 sudo systemctl restart albion-worker albion-ingest-api
 ```
+
+If systemd unit files changed, re-copy from `deploy/vm/` and `sudo systemctl daemon-reload`.
+
+## Schema migrations (production)
+
+Production schema changes are applied from **ingest on this VM**, not from Vercel or the `client` repo.
+
+Idempotent scripts live in `scripts/db/`. After pulling ingest changes that touch the database:
+
+```bash
+cd /home/ubuntu/ingest
+npm run db:apply-pending
+```
+
+Or run individual scripts:
+
+| Script | Purpose |
+|--------|---------|
+| `npm run db:apply-api-sync-health` | `api_sync_state` health columns |
+| `npm run db:apply-alliance-battles` | Alliance battles cache columns |
+| `npm run db:apply-kill-fame-idx` | Kill fame partial index |
+| `npm run db:apply-battle-detail-unavailable` | Battle detail sync unavailable columns |
+| `npm run db:apply-battle-detail-eviction` | Battle detail eviction column + index |
+| `npm run db:apply-ops-events` | `ops_events` table |
+| `npm run db:apply-api-request-log-details` | `api_request_logs.details` column |
+
+Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
+
+For **local dev**, use `npm run db:push` from `client/` against local Docker Postgres only.
 
 ## Vercel connection
 

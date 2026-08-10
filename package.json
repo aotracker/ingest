@@ -18,6 +18,14 @@
     "jobs:health:loop": "npm run worker:scheduler:loop",
     "jobs:queue-top-guilds": "tsx --env-file=.env scripts/queue-top-guilds-from-events.ts",
     "db:evict-battle-details": "tsx --env-file=.env scripts/evict-stale-battle-details.ts",
+    "db:apply-api-sync-health": "tsx --env-file=.env scripts/db/apply-api-sync-health-schema.ts",
+    "db:apply-alliance-battles": "tsx --env-file=.env scripts/db/apply-alliance-battles-schema.ts",
+    "db:apply-kill-fame-idx": "tsx --env-file=.env scripts/db/apply-kill-fame-idx.ts",
+    "db:apply-battle-detail-unavailable": "tsx --env-file=.env scripts/db/apply-battle-detail-unavailable-schema.ts",
+    "db:apply-battle-detail-eviction": "tsx --env-file=.env scripts/db/apply-battle-detail-eviction-schema.ts",
+    "db:apply-ops-events": "tsx --env-file=.env scripts/db/apply-ops-events-schema.ts",
+    "db:apply-api-request-log-details": "tsx --env-file=.env scripts/db/apply-api-request-log-details-schema.ts",
+    "db:apply-pending": "npm run db:apply-api-sync-health && npm run db:apply-alliance-battles && npm run db:apply-kill-fame-idx && npm run db:apply-battle-detail-unavailable && npm run db:apply-battle-detail-eviction && npm run db:apply-ops-events && npm run db:apply-api-request-log-details",
     "api": "tsx --env-file=.env src/server.ts"
   },
   "dependencies": {
