@@ -17,6 +17,7 @@ import {
 } from "@aotracker/core/jobs/worker-state";
 import { processBullJob } from "./processor";
 import { runHealthChecks, runIngestPoll } from "./scheduled";
+import { recordOpsEvent } from "@aotracker/core/ops/events";
 
 /** Discovery poll interval — recent events + recent battles per enabled region. */
 const INGEST_LOOP_MS = 12 * 60 * 1000;
@@ -125,6 +126,13 @@ async function startSchedulerWorker(): Promise<Worker> {
 
   worker.on("failed", (job, err) => {
     console.error(`[worker] scheduler ${job?.name} failed:`, err);
+    void recordOpsEvent({
+      source: "scheduler",
+      severity: "error",
+      category: job?.name ?? "scheduler",
+      message: err instanceof Error ? err.message : String(err),
+      details: { queue: QUEUE_NAMES.SCHEDULER, jobName: job?.name },
+    });
   });
 
   return worker;
@@ -159,6 +167,22 @@ function startJobWorker(queueName: string): Worker {
         "process-jobs",
         err instanceof Error ? err.message : String(err)
       );
+      void recordOpsEvent({
+        source: "job",
+        severity: "error",
+        category: job.name,
+        region:
+          typeof job.data?.region === "string"
+            ? (job.data.region as import("@aotracker/core/albion/types").AlbionRegion)
+            : undefined,
+        message: err instanceof Error ? err.message : String(err),
+        details: {
+          queue: queueName,
+          jobName: job.name,
+          jobId: job.id,
+          failedReason: job.failedReason,
+        },
+      });
     }
   });
 

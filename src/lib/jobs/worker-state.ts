@@ -156,6 +156,15 @@ export async function recordWorkerRunError(
       updatedAt: now,
     })
     .where(eq(schema.cronJobState.jobKey, jobKey));
+
+  const { recordOpsEvent } = await import("../ops/events");
+  await recordOpsEvent({
+    source: "worker",
+    severity: "error",
+    category: jobKey,
+    message: errorMessage,
+    details: { jobKey },
+  });
 }
 
 /** @deprecated Use recordWorkerRunSuccess */

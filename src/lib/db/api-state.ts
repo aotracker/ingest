@@ -5,7 +5,8 @@ import type { AlbionRegion } from "../albion/types";
 /** How long the circuit stays open before a probe request is allowed. */
 export const CIRCUIT_RESET_MS = 60_000;
 /** Final failed requests (after retries) required to open the circuit. */
-const CIRCUIT_FAILURE_THRESHOLD = 5;
+/** Final failed requests (after retries) required to open the circuit. */
+export const CIRCUIT_FAILURE_THRESHOLD = 5;
 /** Default job re-queue delay when a worker hits an open circuit. */
 export const CIRCUIT_JOB_DEFER_MS = 30_000;
 /** Soft circuit defers before a job is marked failed instead of looping forever. */
@@ -109,7 +110,12 @@ export async function enforceSharedRateLimit(
 
 export async function recordHealthCheck(
   region: AlbionRegion,
-  result: { ok: boolean; latencyMs: number; note?: string }
+  result: {
+    ok: boolean;
+    latencyMs: number;
+    note?: string;
+    details?: Record<string, unknown>;
+  }
 ): Promise<void> {
   await ensureRegionState(region);
   const now = new Date();
@@ -130,6 +136,7 @@ export async function recordHealthCheck(
     status: result.ok ? "success" : "error",
     errorType: result.ok ? undefined : "health_check",
     errorMessage: result.ok ? undefined : result.note ?? "Health check failed",
+    details: result.ok ? {} : (result.details ?? {}),
   });
 }
 
@@ -168,7 +175,8 @@ export async function recordApiSoftMiss(
   region: AlbionRegion,
   endpoint: string,
   latencyMs: number,
-  errorMessage: string
+  errorMessage: string,
+  details?: Record<string, unknown>
 ): Promise<void> {
   await ensureRegionState(region);
   await db.insert(schema.apiRequestLogs).values({
@@ -178,6 +186,7 @@ export async function recordApiSoftMiss(
     status: "miss",
     errorType: "not_found",
     errorMessage,
+    details: details ?? {},
   });
 }
 
@@ -186,7 +195,8 @@ export async function recordApiFailure(
   endpoint: string,
   latencyMs: number,
   errorType: string,
-  errorMessage: string
+  errorMessage: string,
+  details?: Record<string, unknown>
 ): Promise<void> {
   const state = await ensureRegionState(region);
   const now = new Date();
@@ -209,6 +219,28 @@ export async function recordApiFailure(
     .set(updates)
     .where(eq(schema.apiSyncState.region, region));
 
+  if (failures >= CIRCUIT_FAILURE_THRESHOLD) {
+    const { recordOpsEvent } = await import("../ops/events");
+    await recordOpsEvent({
+      source: "api",
+      severity: "error",
+      category: "circuit",
+      region,
+      message: `Circuit opened after ${failures} failures: ${errorMessage}`,
+      details: { endpoint, errorType, failures, ...(details ?? {}) },
+    });
+  } else {
+    const { recordOpsEvent } = await import("../ops/events");
+    await recordOpsEvent({
+      source: "api",
+      severity: "error",
+      category: "api_failure",
+      region,
+      message: errorMessage,
+      details: { endpoint, errorType, failures, ...(details ?? {}) },
+    });
+  }
+
   await db.insert(schema.apiRequestLogs).values({
     region,
     endpoint,
@@ -216,6 +248,7 @@ export async function recordApiFailure(
     status: "error",
     errorType,
     errorMessage,
+    details: details ?? {},
   });
 }
 

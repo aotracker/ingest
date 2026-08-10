@@ -18,6 +18,7 @@ import {
 } from "./jobs/constants";
 import type { JobPayload } from "./jobs/types";
 import { executeJob } from "./handlers";
+import { recordOpsEvent } from "@aotracker/core/ops/events";
 
 async function withTimeout<T>(
   work: Promise<T>,
@@ -52,11 +53,12 @@ async function deferForCircuit(
   const circuitDefers = (payload.circuitDefers ?? 0) + 1;
 
   if (circuitDefers > CIRCUIT_MAX_JOB_DEFERS) {
+    const finalMessage = `${error} — exceeded ${CIRCUIT_MAX_JOB_DEFERS} circuit defers`;
     if (payload.region != null && payload.battleId != null) {
       await markBattleDetailUnavailable(
         payload.region,
         payload.battleId,
-        `${error} — exceeded ${CIRCUIT_MAX_JOB_DEFERS} circuit defers`
+        finalMessage
       ).catch((err) => {
         console.warn(
           `[jobs] failed to mark battle unavailable ${payload.region}/${payload.battleId}:`,
@@ -64,9 +66,19 @@ async function deferForCircuit(
         );
       });
     }
-    throw new Error(
-      `${error} — exceeded ${CIRCUIT_MAX_JOB_DEFERS} circuit defers`
-    );
+    void recordOpsEvent({
+      source: "job",
+      severity: "error",
+      category: "circuit_max_defers",
+      region: payload.region,
+      message: finalMessage,
+      details: {
+        jobName: job.name,
+        jobId: job.id,
+        circuitDefers,
+      },
+    });
+    throw new Error(finalMessage);
   }
 
   const { userPromoted: _userPromoted, ...rest } = payload;
@@ -95,9 +107,21 @@ async function deferForBattleNotReady(
         );
       });
     }
-    throw new Error(
-      `${error} — Albion still has not published this battle after ${BATTLE_NOT_READY_MAX_DEFERS} soft retries`
-    );
+    const finalMessage = `${error} — Albion still has not published this battle after ${BATTLE_NOT_READY_MAX_DEFERS} soft retries`;
+    void recordOpsEvent({
+      source: "job",
+      severity: "warning",
+      category: "battle_not_ready_max_defers",
+      region: payload.region,
+      message: finalMessage,
+      details: {
+        jobName: job.name,
+        jobId: job.id,
+        notReadyDefers,
+        battleId: payload.battleId,
+      },
+    });
+    throw new Error(finalMessage);
   }
 
   const notReadySince = payload.notReadySince ?? Date.now();
@@ -151,6 +175,18 @@ export async function processBullJob(
     }
     if (isJobTimeoutError(err)) {
       console.error(`[jobs] ${job.name} timed out:`, message);
+      void recordOpsEvent({
+        source: "job",
+        severity: "error",
+        category: "job_timeout",
+        region: payload.region,
+        message,
+        details: {
+          jobName: job.name,
+          jobId: job.id,
+          timeoutMs,
+        },
+      });
     } else {
       console.error(`[jobs] ${job.name} failed:`, message);
     }

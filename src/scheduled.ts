@@ -43,7 +43,12 @@ export async function runHealthChecks(): Promise<void> {
   for (const region of ENABLED_REGIONS) {
     try {
       const result = await client.ping(region);
-      await recordHealthCheck(region, result);
+      await recordHealthCheck(region, {
+        ok: result.ok,
+        latencyMs: result.latencyMs,
+        note: result.note,
+        details: result.details,
+      });
       if (!result.ok && result.note?.includes("Circuit open")) {
         console.warn(`[health] ${region} skipped — circuit open`);
       } else if (!result.ok) {

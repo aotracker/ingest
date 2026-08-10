@@ -880,6 +880,7 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
     const events = await client.getRecentEvents(region, 50, 0);
     let ingested = 0;
     let eventErrors = 0;
+    let lastEventError: string | null = null;
     const battleDetailCache = new Map<number, IngestBattleStats>();
 
     for (const event of events) {
@@ -888,9 +889,11 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
         if (isNew) ingested++;
       } catch (err) {
         eventErrors++;
+        lastEventError =
+          err instanceof Error ? err.message : String(err);
         console.error(
           `[ingest] Failed event ${event.EventId} in ${region}:`,
-          err instanceof Error ? err.message : err
+          lastEventError
         );
       }
     }
@@ -905,9 +908,9 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
 
     const warningNote =
       region === "asia" && events.length === 0
-        ? "Asia events feed returned no data (404 or empty)"
+        ? `[${region}] Asia events feed returned no data (404 or empty)`
         : eventErrors > 0
-          ? `${eventErrors} event(s) failed to ingest`
+          ? `[${region}] ${eventErrors} event(s) failed to ingest${lastEventError ? `: ${lastEventError}` : ""}`
           : null;
 
     await db

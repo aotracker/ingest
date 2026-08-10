@@ -212,9 +212,19 @@ async function purgeOldApiRequestLogs(): Promise<void> {
     .where(lte(schema.apiRequestLogs.createdAt, cutoff));
 }
 
+async function purgeOldOpsEvents(): Promise<void> {
+  const { purgeOldOpsEvents: purge } = await import(
+    "@aotracker/core/ops/events"
+  );
+  await purge();
+}
+
 async function getMergedQueueSnapshot(): Promise<QueueStatusSnapshot> {
   await purgeOldApiRequestLogs().catch((err) => {
     console.warn("[jobs] api-request-log purge skipped:", err);
+  });
+  await purgeOldOpsEvents().catch((err) => {
+    console.warn("[jobs] ops-events purge skipped:", err);
   });
 
   const counts = {

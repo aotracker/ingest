@@ -287,6 +287,7 @@ export const apiRequestLogs = pgTable(
     status: text("status").notNull(),
     errorType: text("error_type"),
     errorMessage: text("error_message"),
+    details: jsonb("details").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [index("api_request_logs_region_created_idx").on(t.region, t.createdAt)]
@@ -305,6 +306,28 @@ export const cronJobState = pgTable("cron_job_state", {
   lastResult: jsonb("last_result"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const opsEvents = pgTable(
+  "ops_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    source: text("source").notNull(),
+    severity: text("severity").notNull(),
+    category: text("category"),
+    region: regionEnum("region"),
+    message: text("message").notNull(),
+    details: jsonb("details").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("ops_events_created_idx").on(t.createdAt),
+    index("ops_events_source_severity_idx").on(
+      t.source,
+      t.severity,
+      t.createdAt
+    ),
+  ]
+);
 
 export const itemMarketPrices = pgTable(
   "item_market_prices",

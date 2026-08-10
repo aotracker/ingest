@@ -7,6 +7,12 @@ import {
   recordApiSuccess,
   CircuitOpenError,
 } from "../db/api-state";
+import {
+  AlbionApiError,
+  buildAlbionFetchFailure,
+  buildAlbionHttpFailure,
+  isHttpNotFoundError,
+} from "./errors";
 import type {
   AlbionAllianceInfo,
   AlbionBattle,
@@ -68,6 +74,16 @@ export class AlbionApiClient {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const start = Date.now();
+      const errorContext = {
+        region,
+        path,
+        url,
+        attempt,
+        maxRetries,
+        latencyMs: 0,
+        timeoutMs: timeout,
+      };
+
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
@@ -80,9 +96,11 @@ export class AlbionApiClient {
 
         clearTimeout(timer);
         const latencyMs = Date.now() - start;
+        errorContext.latencyMs = latencyMs;
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const failure = await buildAlbionHttpFailure(response, errorContext);
+          throw new AlbionApiError(failure.message, failure);
         }
 
         const data = (await response.json()) as T;
@@ -90,28 +108,44 @@ export class AlbionApiClient {
         return data;
       } catch (err) {
         const latencyMs = Date.now() - start;
-        lastError = err instanceof Error ? err : new Error(String(err));
-        const errorType =
-          lastError.name === "AbortError" ? "timeout" : "request_failed";
+        errorContext.latencyMs = latencyMs;
 
-        // Count one logical failure after all retries — not each attempt —
-        // so a single flaky request cannot trip the circuit alone.
-        // 404 "not published yet" is a soft miss and must not open the circuit.
+        if (err instanceof CircuitOpenError) {
+          lastError = err;
+          throw err;
+        }
+
+        const failure =
+          err instanceof AlbionApiError
+            ? {
+                errorType: err.errorType,
+                message: err.message,
+                details: err.details,
+              }
+            : buildAlbionFetchFailure(err, errorContext);
+
+        lastError =
+          err instanceof AlbionApiError
+            ? err
+            : new Error(failure.message);
+
         if (attempt >= maxRetries) {
-          if (/\bHTTP 404\b/.test(lastError.message)) {
+          if (isHttpNotFoundError(lastError)) {
             await recordApiSoftMiss(
               region,
               path,
               latencyMs,
-              lastError.message
+              failure.message,
+              failure.details
             );
           } else {
             await recordApiFailure(
               region,
               path,
               latencyMs,
-              errorType,
-              lastError.message
+              failure.errorType,
+              failure.message,
+              failure.details
             );
           }
         } else {
@@ -303,10 +337,19 @@ export class AlbionApiClient {
     );
   }
 
-  async ping(region: AlbionRegion): Promise<{ ok: boolean; latencyMs: number; note?: string }> {
+  async ping(
+    region: AlbionRegion
+  ): Promise<{
+    ok: boolean;
+    latencyMs: number;
+    note?: string;
+    details?: Record<string, unknown>;
+  }> {
     const start = Date.now();
     const eventsPath = "/events?limit=1";
     const searchPath = "/search?q=a";
+    const probePath = region === "asia" ? searchPath : eventsPath;
+    const probeUrl = `${REGION_BASE_URLS[region]}${probePath}`;
     // Health/status pages must not wait on full retry budgets when gameinfo is down.
     const pingOptions = {
       skipRateLimit: true,
@@ -327,10 +370,33 @@ export class AlbionApiClient {
           return {
             ok: false,
             latencyMs: Date.now() - start,
-            note: "Circuit open — cooling down",
+            note: `[${region}] Circuit open — cooling down before probe`,
+            details: {
+              region,
+              path: probePath,
+              url: probeUrl,
+              reason: "circuit_open",
+            },
           };
         }
-        return { ok: false, latencyMs: Date.now() - start };
+        if (err instanceof AlbionApiError) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - start,
+            note: err.message,
+            details: err.details,
+          };
+        }
+        return {
+          ok: false,
+          latencyMs: Date.now() - start,
+          note: err instanceof Error ? err.message : String(err),
+          details: {
+            region,
+            path: probePath,
+            url: probeUrl,
+          },
+        };
       }
     }
 
@@ -342,10 +408,33 @@ export class AlbionApiClient {
         return {
           ok: false,
           latencyMs: Date.now() - start,
-          note: "Circuit open — cooling down",
+          note: `[${region}] Circuit open — cooling down before probe`,
+          details: {
+            region,
+            path: probePath,
+            url: probeUrl,
+            reason: "circuit_open",
+          },
         };
       }
-      return { ok: false, latencyMs: Date.now() - start };
+      if (err instanceof AlbionApiError) {
+        return {
+          ok: false,
+          latencyMs: Date.now() - start,
+          note: err.message,
+          details: err.details,
+        };
+      }
+      return {
+        ok: false,
+        latencyMs: Date.now() - start,
+        note: err instanceof Error ? err.message : String(err),
+        details: {
+          region,
+          path: probePath,
+          url: probeUrl,
+        },
+      };
     }
   }
 
