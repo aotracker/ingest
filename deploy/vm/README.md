@@ -124,3 +124,30 @@ npm run start     # HTTP API + BullMQ workers (same as production VM)
 Or run separately: `npm run worker` and `npm run api`.
 
 Postgres + Redis: `docker compose -f deploy/docker-compose.yml up -d` (from monorepo root on your dev machine)
+
+## Redis `READONLY` / replica errors
+
+If journal logs show `READONLY You can't write against a read only replica` or `master -> replica`:
+
+BullMQ requires a **writable Redis master**. The local Docker Redis should never be a replica — this usually means the container restarted badly, hit memory pressure, or was manually misconfigured.
+
+```bash
+cd /opt/albion-postgres
+docker compose ps
+docker logs albion-redis --tail 50
+
+# Should show role:master
+docker exec albion-redis redis-cli INFO replication | grep role
+
+# If role:slave, promote this instance back to master:
+docker exec albion-redis redis-cli REPLICAOF NO ONE
+
+# Restart ingest after Redis is writable:
+sudo systemctl restart albion-ingest-worker
+```
+
+To cap Redis memory inside the 512m container limit, ensure `docker-compose.yml` uses:
+
+`redis-server --appendonly yes --maxmemory 450mb --maxmemory-policy noeviction`
+
+Re-copy [docker-compose.prod.yml](../../../deploy/vm/docker-compose.prod.yml) and `docker compose up -d redis` if the running container lacks `maxmemory`.

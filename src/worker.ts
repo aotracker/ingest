@@ -4,7 +4,7 @@ import {
   isRegionEnabled,
   type AlbionRegion,
 } from "@aotracker/core/albion/types";
-import { createRedisConnection } from "./jobs/connection";
+import { createRedisConnection, assertRedisWritable } from "./jobs/connection";
 import { QUEUE_NAMES } from "./jobs/types";
 import {
   getIngestQueue,
@@ -197,6 +197,9 @@ function startJobWorker(queueName: string): Worker {
 
 async function main(): Promise<void> {
   installSignalHandlers();
+
+  await assertRedisWritable();
+  console.log("[worker] Redis write check OK");
 
   const workers: Worker[] = [];
 

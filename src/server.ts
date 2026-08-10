@@ -21,6 +21,7 @@ import {
   getLiveSearchJobInfo,
   getQueueStatuses,
 } from "./jobs/status";
+import { assertRedisWritable } from "./jobs/connection";
 
 const PORT = parseInt(process.env.INGEST_API_PORT ?? "3001", 10);
 
@@ -271,17 +272,25 @@ app.get("/jobs/queues", async (_req, res) => {
   res.json(snapshot);
 });
 
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[ingest-api] Listening on 0.0.0.0:${PORT}`);
-});
+async function start(): Promise<void> {
+  await assertRedisWritable();
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[ingest-api] Listening on 0.0.0.0:${PORT}`);
+  });
 
-server.on("error", (err: NodeJS.ErrnoException) => {
-  if (err.code === "EADDRINUSE") {
-    console.error(
-      `[ingest-api] Port ${PORT} is already in use. Stop the other ingest API or set INGEST_API_PORT.`
-    );
-  } else {
-    console.error("[ingest-api] Failed to start:", err);
-  }
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[ingest-api] Port ${PORT} is already in use. Stop the other ingest API or set INGEST_API_PORT.`
+      );
+    } else {
+      console.error("[ingest-api] Failed to start:", err);
+    }
+    process.exit(1);
+  });
+}
+
+start().catch((err) => {
+  console.error("[ingest-api] Startup failed:", err);
   process.exit(1);
 });
