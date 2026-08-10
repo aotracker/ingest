@@ -5,6 +5,7 @@ Workers and the ingest HTTP API run from **`/home/ubuntu/ingest`** using Redis +
 ## Prerequisites on the VM
 
 - Ubuntu 24.04 LTS (default `ubuntu` user)
+- **8 vCPU / 24 GB RAM** (production OVH ingest host)
 - Node.js 20+
 - PostgreSQL + Redis (Docker at `/opt/albion-postgres/`)
 - Ingest repo cloned to `/home/ubuntu/ingest`
@@ -146,8 +147,8 @@ docker exec albion-redis redis-cli REPLICAOF NO ONE
 sudo systemctl restart albion-ingest-worker
 ```
 
-To cap Redis memory inside the 512m container limit, ensure `docker-compose.yml` uses:
+To cap Redis memory (production template: **2 GB** container, **1800 MB** `maxmemory`), ensure `/opt/albion-postgres/docker-compose.yml` matches [docker-compose.prod.yml](../../../deploy/vm/docker-compose.prod.yml):
 
-`redis-server --appendonly yes --maxmemory 450mb --maxmemory-policy noeviction`
+`redis-server --appendonly yes --maxmemory 1800mb --maxmemory-policy noeviction` with `mem_limit: 2g`
 
-Re-copy [docker-compose.prod.yml](../../../deploy/vm/docker-compose.prod.yml) and `docker compose up -d redis` if the running container lacks `maxmemory`.
+To **expand Redis** on the 24 GB VM, raise both `mem_limit` and `maxmemory` in `/opt/albion-postgres/docker-compose.yml`, then `docker compose up -d redis`. Example production values: `mem_limit: 2g`, `--maxmemory 1800mb`.

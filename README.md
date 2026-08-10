@@ -4,6 +4,8 @@
 
 ## Stack on the VM
 
+Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`/opt/albion-postgres/`). Default limits: Postgres **14 GB**, Redis **2 GB** — see [deploy/vm/README.md](./deploy/vm/README.md).
+
 - **Redis** — BullMQ job queues (`ingest`, `refresh`, `scheduler`), localhost only in production
 - **Postgres** — app data (shared with Vercel `client/`)
 - **This package** — workers + Express HTTP API on port 3001
