@@ -1,6 +1,6 @@
 [Unit]
 Description=Albion Kill Tracker — BullMQ job processor (%i)
-After=docker.service network-online.target
+After=docker.service network-online.target albion-ingest-worker.service
 Wants=network-online.target
 
 [Service]

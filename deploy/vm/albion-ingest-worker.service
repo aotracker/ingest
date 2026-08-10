@@ -1,5 +1,5 @@
 [Unit]
-Description=Albion Kill Tracker — BullMQ worker (scheduler + job processors)
+Description=Albion Kill Tracker — ingest HTTP API + BullMQ workers (scheduler + processors)
 After=docker.service network-online.target
 Wants=network-online.target
 
@@ -10,7 +10,7 @@ Group=ubuntu
 WorkingDirectory=/home/ubuntu/ingest
 EnvironmentFile=/home/ubuntu/ingest/.env
 Environment=JOBS_SOURCE=worker
-ExecStart=/usr/bin/npm run worker
+ExecStart=/usr/bin/npm start
 Restart=always
 RestartSec=5
 KillMode=mixed

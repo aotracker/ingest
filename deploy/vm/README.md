@@ -17,29 +17,34 @@ cp .env.example .env
 # Edit: DATABASE_URL, REDIS_URL, DISABLED_REGIONS, INGEST_API_SECRET, INGEST_API_PORT
 ```
 
-## systemd — main worker
+## systemd — ingest API + workers
+
+Runs the ingest HTTP API (Vercel job triggers) and BullMQ workers (scheduler + processors) in one process via `npm start`.
 
 ```bash
-sudo cp /home/ubuntu/ingest/deploy/vm/albion-worker.service /etc/systemd/system/
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-ingest-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now albion-worker
-journalctl -u albion-worker -f
+sudo systemctl enable --now albion-ingest-worker
+journalctl -u albion-ingest-worker -f
 ```
 
-`albion-worker.service` runs scheduler (12m ingest poll, 5m health) plus continuous processors for `ingest` and `refresh` queues.
+`albion-ingest-worker.service` runs `scripts/start.ts`, which launches:
+- **HTTP API** on `INGEST_API_PORT` (default `3001`) — queue status, job triggers for Vercel
+- **BullMQ workers** — scheduler (12m ingest poll, 5m health) plus continuous processors for `ingest` and `refresh` queues
 
-## systemd — ingest HTTP API
+Set `INGEST_API_PORT` and `INGEST_API_SECRET` in `/home/ubuntu/ingest/.env`. Use the same secret as `INGEST_API_SECRET` on Vercel.
 
-Vercel calls this API to enqueue jobs and read queue status.
+### Migrating from separate `albion-worker` + `albion-ingest-api` services
+
+If the VM still has the old units:
 
 ```bash
-sudo cp /home/ubuntu/ingest/deploy/vm/albion-ingest-api.service /etc/systemd/system/
+sudo systemctl disable --now albion-ingest-api albion-worker
+sudo rm -f /etc/systemd/system/albion-ingest-api.service /etc/systemd/system/albion-worker.service
+sudo cp /home/ubuntu/ingest/deploy/vm/albion-ingest-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now albion-ingest-api
-journalctl -u albion-ingest-api -f
+sudo systemctl enable --now albion-ingest-worker
 ```
-
-Set `INGEST_API_PORT` (default `3001`) and `INGEST_API_SECRET` in `/home/ubuntu/ingest/.env`. Use the same secret as `INGEST_API_SECRET` on Vercel.
 
 ### Optional per-region processors
 
@@ -63,7 +68,7 @@ cd /home/ubuntu/ingest
 git fetch origin && git reset --hard origin/main
 npm ci
 npm run db:apply-pending
-sudo systemctl restart albion-worker albion-ingest-api
+sudo systemctl restart albion-ingest-worker
 ```
 
 If systemd unit files changed, re-copy from `deploy/vm/` and `sudo systemctl daemon-reload`.
@@ -113,8 +118,9 @@ Full deployment guide: [DEPLOY.md](../../../DEPLOY.md).
 ```bash
 cd ingest
 cp .env.example .env
-npm run worker    # BullMQ workers
-npm run api       # HTTP API (separate terminal)
+npm run start     # HTTP API + BullMQ workers (same as production VM)
 ```
+
+Or run separately: `npm run worker` and `npm run api`.
 
 Postgres + Redis: `docker compose -f deploy/docker-compose.yml up -d` (from monorepo root on your dev machine)
