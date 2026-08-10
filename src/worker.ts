@@ -72,20 +72,21 @@ function installSignalHandlers(): void {
 
 async function registerRepeatableJobs(): Promise<void> {
   const queue = getSchedulerQueue();
+  // Register health first; with scheduler concurrency > 1 it can run alongside ingest.
+  await queue.add(
+    "health-check",
+    {},
+    {
+      repeat: { every: HEALTH_LOOP_MS, immediately: true },
+      jobId: "repeat-health-check",
+    }
+  );
   await queue.add(
     "ingest-poll",
     {},
     {
       repeat: { every: INGEST_LOOP_MS, immediately: true },
       jobId: "repeat-ingest-poll",
-    }
-  );
-  await queue.add(
-    "health-check",
-    {},
-    {
-      repeat: { every: HEALTH_LOOP_MS },
-      jobId: "repeat-health-check",
     }
   );
 }
@@ -112,6 +113,7 @@ async function startSchedulerWorker(): Promise<Worker> {
 
       if (job.name === "health-check") {
         try {
+          console.log("[worker] Health checks starting");
           await runHealthChecks();
           await recordWorkerRunSuccess("health", { task: "health", source });
           console.log("[worker] Health checks complete");
@@ -124,7 +126,8 @@ async function startSchedulerWorker(): Promise<Worker> {
     },
     {
       connection: createRedisConnection(),
-      concurrency: 1,
+      // Ingest poll can run for many minutes; health must not wait on concurrency 1.
+      concurrency: 2,
       lockDuration: SCHEDULER_LOCK_MS,
       lockRenewTime: SCHEDULER_LOCK_RENEW_MS,
     }
