@@ -23,11 +23,14 @@ import { processBullJob } from "./processor";
 import { runHealthChecks, runIngestPoll } from "./scheduled";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 
-/** Discovery poll interval — recent events + recent battles per enabled region. */
-const INGEST_LOOP_MS = 12 * 60 * 1000;
+/**
+ * Discovery poll interval. Must be longer than a typical poll (~15–20m under load)
+ * so BullMQ's next repeat does not pile up while the previous run is still active.
+ */
+const INGEST_LOOP_MS = 25 * 60 * 1000;
 const HEALTH_LOOP_MS = 5 * 60 * 1000;
-/** Ingest poll can run longer than the repeat interval; BullMQ default lock is 30s. */
-const SCHEDULER_LOCK_MS = INGEST_LOOP_MS + 8 * 60 * 1000;
+/** Lock must outlive the slowest ingest poll; default BullMQ lock is only 30s. */
+const SCHEDULER_LOCK_MS = 40 * 60 * 1000;
 const SCHEDULER_LOCK_RENEW_MS = 60 * 1000;
 
 const args = process.argv.slice(2);
@@ -63,6 +66,8 @@ const source =
   (preferRegion ? `worker-${preferRegion}` : "worker");
 
 let shuttingDown = false;
+/** Prevent concurrent ingest-poll handlers from overlapping on concurrency > 1. */
+let ingestPollInFlight = false;
 
 function installSignalHandlers(): void {
   const onSignal = (signal: string) => {
@@ -74,15 +79,66 @@ function installSignalHandlers(): void {
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 }
 
+/**
+ * Clear stale scheduler state then re-register repeatables.
+ *
+ * Important: do NOT pass a fixed `jobId` on repeatable jobs. BullMQ treats that
+ * as a dedupe key, so a long-running ingest-poll blocks the next scheduled
+ * instance and the repeat chain silently stops (health-check was unaffected
+ * because it finishes in seconds).
+ */
 async function registerRepeatableJobs(): Promise<void> {
   const queue = getSchedulerQueue();
+
+  const existing = await queue.getRepeatableJobs();
+  for (const job of existing) {
+    try {
+      await queue.removeRepeatableByKey(job.key);
+    } catch (err) {
+      console.warn(
+        `[worker] Failed to remove repeatable ${job.key}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  if (existing.length > 0) {
+    console.log(
+      `[worker] Cleared ${existing.length} previous scheduler repeatable(s)`
+    );
+  }
+
+  // Orphaned jobs from a previous process / fixed jobId era can leave the
+  // scheduler queue in a bad state across restarts.
+  const leftover = await queue.getJobs(
+    ["active", "waiting", "delayed", "paused"],
+    0,
+    200
+  );
+  let removed = 0;
+  for (const job of leftover) {
+    if (job.name !== "ingest-poll" && job.name !== "health-check") continue;
+    // Keep one-off manual triggers enqueued via the ingest API.
+    if (typeof job.id === "string" && job.id.startsWith("manual-")) continue;
+    try {
+      await job.remove();
+      removed += 1;
+    } catch (err) {
+      console.warn(
+        `[worker] Could not remove leftover ${job.name} ${job.id}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  if (removed > 0) {
+    console.log(`[worker] Removed ${removed} leftover scheduler job(s)`);
+  }
+
   // Register health first; with scheduler concurrency > 1 it can run alongside ingest.
   await queue.add(
     "health-check",
     {},
     {
       repeat: { every: HEALTH_LOOP_MS, immediately: true },
-      jobId: "repeat-health-check",
     }
   );
   await queue.add(
@@ -90,8 +146,11 @@ async function registerRepeatableJobs(): Promise<void> {
     {},
     {
       repeat: { every: INGEST_LOOP_MS, immediately: true },
-      jobId: "repeat-ingest-poll",
     }
+  );
+
+  console.log(
+    `[worker] Registered scheduler repeats: ingest every ${INGEST_LOOP_MS / 60_000}m, health every ${HEALTH_LOOP_MS / 60_000}m`
   );
 }
 
@@ -102,15 +161,31 @@ async function startSchedulerWorker(): Promise<Worker> {
     QUEUE_NAMES.SCHEDULER,
     async (job) => {
       if (job.name === "ingest-poll") {
+        if (ingestPollInFlight) {
+          console.log(
+            "[worker] Ingest poll skipped — previous poll still running"
+          );
+          return;
+        }
+        ingestPollInFlight = true;
+        const startedAt = Date.now();
         try {
           console.log("[worker] Ingest poll starting");
           await runIngestPoll();
-          await recordWorkerRunSuccess("ingest", { task: "ingest", source });
-          console.log("[worker] Ingest poll complete");
+          await recordWorkerRunSuccess("ingest", {
+            task: "ingest",
+            source,
+            durationMs: Date.now() - startedAt,
+          });
+          console.log(
+            `[worker] Ingest poll complete (${Math.round((Date.now() - startedAt) / 1000)}s)`
+          );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           await recordWorkerRunError("ingest", message).catch(() => undefined);
           throw err;
+        } finally {
+          ingestPollInFlight = false;
         }
         return;
       }
@@ -146,6 +221,10 @@ async function startSchedulerWorker(): Promise<Worker> {
       message: err instanceof Error ? err.message : String(err),
       details: { queue: QUEUE_NAMES.SCHEDULER, jobName: job?.name },
     });
+  });
+
+  worker.on("stalled", (jobId) => {
+    console.warn(`[worker] scheduler job stalled: ${jobId}`);
   });
 
   return worker;

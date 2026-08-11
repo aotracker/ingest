@@ -6,7 +6,7 @@ export const WORKER_JOB_DEFINITIONS = [
     jobKey: "ingest",
     label: "Ingest poll",
     path: "worker:scheduler",
-    schedule: "Every 12 minutes (BullMQ repeatable)",
+    schedule: "Every 25 minutes (BullMQ repeatable)",
   },
   {
     jobKey: "health",
@@ -28,8 +28,8 @@ export type WorkerJobKey = (typeof WORKER_JOB_DEFINITIONS)[number]["jobKey"];
 export type CronJobKey = WorkerJobKey;
 export const CRON_JOB_DEFINITIONS = WORKER_JOB_DEFINITIONS;
 
-/** Ingest poll runs every 12 minutes — allow a little slack. */
-export const INGEST_ALIVE_MS = 15 * 60 * 1000;
+/** Ingest poll runs every 25 minutes — allow slack past a slow run. */
+export const INGEST_ALIVE_MS = 30 * 60 * 1000;
 /** Health check runs every 5 minutes — allow a little slack. */
 export const HEALTH_ALIVE_MS = 8 * 60 * 1000;
 /** BullMQ job processors should heartbeat on every completed job. */

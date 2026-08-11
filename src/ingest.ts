@@ -882,8 +882,13 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
     let eventErrors = 0;
     let lastEventError: string | null = null;
     const battleDetailCache = new Map<number, IngestBattleStats>();
+    const total = events.length;
+    const startedAt = Date.now();
 
-    for (const event of events) {
+    console.log(`[ingest] ${region} events: processing ${total}`);
+
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i]!;
       try {
         const isNew = await ingestEvent(region, event, { battleDetailCache });
         if (isNew) ingested++;
@@ -894,6 +899,15 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
         console.error(
           `[ingest] Failed event ${event.EventId} in ${region}:`,
           lastEventError
+        );
+      }
+
+      const done = i + 1;
+      if (done === total || done % 10 === 0) {
+        console.log(
+          `[ingest] ${region} events: ${done}/${total} ` +
+            `(new=${ingested} errors=${eventErrors} ` +
+            `${Math.round((Date.now() - startedAt) / 1000)}s)`
         );
       }
     }

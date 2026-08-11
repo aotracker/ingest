@@ -25,7 +25,7 @@ PM2 runs the ingest HTTP API and BullMQ workers as separate managed processes vi
 | PM2 app | Command | Purpose |
 |---------|---------|---------|
 | `ingest-api` | `npm run api` | HTTP API on `INGEST_API_PORT` (default `3001`) — queue status, job triggers for Vercel |
-| `ingest-worker` | `npm run worker` | BullMQ scheduler (12m ingest poll, 5m health) + processors for `ingest` and `refresh` queues |
+| `ingest-worker` | `npm run worker` | BullMQ scheduler (25m ingest poll, 5m health) + processors for `ingest` and `refresh` queues |
 | `battle-evict` | `npm run db:evict-battle-details` | Weekly battle JSON eviction (Sun 05:30 UTC) |
 
 ### First-time setup
