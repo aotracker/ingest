@@ -22,6 +22,7 @@ import {
   getQueueStatuses,
 } from "./jobs/status";
 import { assertRedisWritable } from "./jobs/connection";
+import { collectFullSystemInfo, pingRedis } from "./system-info";
 
 const PORT = parseInt(process.env.INGEST_API_PORT ?? "3001", 10);
 
@@ -270,6 +271,18 @@ app.get(
 app.get("/jobs/queues", async (_req, res) => {
   const snapshot = await getQueueStatuses();
   res.json(snapshot);
+});
+
+app.get("/system", async (_req, res) => {
+  const [runtime, redis] = await Promise.all([
+    collectFullSystemInfo(),
+    pingRedis(),
+  ]);
+  res.json({
+    fetchedAt: new Date().toISOString(),
+    runtime,
+    redis,
+  });
 });
 
 async function start(): Promise<void> {
