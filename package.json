@@ -32,7 +32,8 @@
     "pm2:restart": "pm2 restart ecosystem.config.cjs",
     "pm2:reload": "pm2 reload ecosystem.config.cjs",
     "pm2:logs": "pm2 logs",
-    "pm2:status": "pm2 status"
+    "pm2:status": "pm2 status",
+    "vm:install-redis-watchdog": "bash deploy/vm/install-redis-watchdog.sh"
   },
   "dependencies": {
     "bullmq": "^5.34.0",

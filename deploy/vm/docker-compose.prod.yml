@@ -1,0 +1,58 @@
+# Production Postgres + Redis for OVH VM (8 vCPU / 24 GB RAM).
+# Copied to /opt/albion-postgres/docker-compose.yml by install-redis-watchdog.sh.
+# Postgres TLS configs (postgresql.conf, pg_hba.conf, certs) must already exist in PG_DIR.
+#
+# To resize Redis or Postgres: edit mem_limit and redis maxmemory below, then:
+#   cd /opt/albion-postgres && docker compose up -d
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: albion-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: albion
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: albion_kills
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data:/var/lib/postgresql/data
+      - ./certs:/var/lib/postgresql/certs:ro
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./backups:/backups:ro
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U albion -d albion_kills"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    mem_limit: 14g
+
+  redis:
+    image: redis:7-alpine
+    container_name: albion-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./redis-data:/data
+      - ./redis-entrypoint.sh:/usr/local/bin/redis-entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/redis-entrypoint.sh"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          redis-cli ping | grep -q PONG &&
+          redis-cli INFO replication | grep -q 'role:master' &&
+          redis-cli SET healthcheck:write 1 EX 10
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 2g

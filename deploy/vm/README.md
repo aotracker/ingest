@@ -154,8 +154,9 @@ BullMQ requires a **writable Redis master**. The local Docker Redis should never
 Upgrade an existing VM without re-running full setup:
 
 ```bash
-sudo bash /path/to/aotracker/deploy/vm/install-redis-watchdog.sh
-cd /home/ubuntu/ingest && git pull && npm ci && npm run pm2:restart
+cd /home/ubuntu/ingest
+git pull && npm ci
+sudo npm run vm:install-redis-watchdog
 ```
 
 **Manual recovery** (if auto-recovery has not been deployed yet):
@@ -177,9 +178,16 @@ cd /home/ubuntu/ingest && npm run pm2:restart
 
 Watchdog log: `/var/log/redis-watchdog.log`
 
-To cap Redis memory (production template: **2 GB** container, **1800 MB** `maxmemory`), ensure `/opt/albion-postgres/docker-compose.yml` matches [docker-compose.prod.yml](../../../deploy/vm/docker-compose.prod.yml):
+To cap Redis memory (production template: **2 GB** container, **1800 MB** `maxmemory`), ensure `/opt/albion-postgres/docker-compose.yml` matches [docker-compose.prod.yml](./docker-compose.prod.yml):
 
-`redis-server --appendonly yes --maxmemory 1800mb --maxmemory-policy noeviction` with `mem_limit: 2g` (via [redis-entrypoint.sh](../../../deploy/vm/redis-entrypoint.sh))
+`redis-server --appendonly yes --maxmemory 1800mb --maxmemory-policy noeviction` with `mem_limit: 2g` (via [redis-entrypoint.sh](./redis-entrypoint.sh))
+
+| Script | Purpose |
+|--------|---------|
+| [install-redis-watchdog.sh](./install-redis-watchdog.sh) | One-shot VM upgrade: entrypoint, healthcheck, cron, PM2 restart |
+| [redis-watchdog.sh](./redis-watchdog.sh) | Cron helper (installed to `/opt/albion-postgres/`) |
+| [redis-entrypoint.sh](./redis-entrypoint.sh) | Redis container entrypoint (self-promote to master) |
+| [docker-compose.prod.yml](./docker-compose.prod.yml) | Production Postgres + Redis compose template |
 
 To **expand Redis** on the 24 GB VM, raise both `mem_limit` and `maxmemory` in `/opt/albion-postgres/docker-compose.yml`, then `docker compose up -d redis`. Example production values: `mem_limit: 2g`, `--maxmemory 1800mb`.
 
