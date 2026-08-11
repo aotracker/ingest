@@ -33,7 +33,7 @@ cp .env.example .env   # DATABASE_URL, REDIS_URL, INGEST_API_SECRET
 npm run start          # HTTP API + workers (local dev)
 ```
 
-Production: use systemd — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPLOY.md](../DEPLOY.md).
+Production: use PM2 — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPLOY.md](../DEPLOY.md).
 
 ## Relationship to `client/`
 

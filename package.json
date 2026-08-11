@@ -26,7 +26,13 @@
     "db:apply-ops-events": "tsx --env-file=.env scripts/db/apply-ops-events-schema.ts",
     "db:apply-api-request-log-details": "tsx --env-file=.env scripts/db/apply-api-request-log-details-schema.ts",
     "db:apply-pending": "npm run db:apply-api-sync-health && npm run db:apply-alliance-battles && npm run db:apply-kill-fame-idx && npm run db:apply-battle-detail-unavailable && npm run db:apply-battle-detail-eviction && npm run db:apply-ops-events && npm run db:apply-api-request-log-details",
-    "api": "tsx --env-file=.env src/server.ts"
+    "api": "tsx --env-file=.env src/server.ts",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:reload": "pm2 reload ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status"
   },
   "dependencies": {
     "bullmq": "^5.34.0",
@@ -38,6 +44,7 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.2",
+    "pm2": "^5.4.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
