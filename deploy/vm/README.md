@@ -35,7 +35,7 @@ cd /home/ubuntu/ingest
 bash deploy/vm/pm2-setup.sh
 ```
 
-Then run the `sudo env PATH=... pm2 startup` command printed by the script, followed by `npx pm2 save`.
+Then run `npx pm2 startup systemd -u ubuntu --hp /home/ubuntu` as **ubuntu** (not root), copy/paste the `sudo` command PM2 prints, and run `npx pm2 save`.
 
 ### Verify
 
@@ -141,6 +141,25 @@ If PM2 logs show `READONLY You can't write against a read only replica` or `mast
 
 BullMQ requires a **writable Redis master**. The local Docker Redis should never be a replica — this usually means the container restarted badly, hit memory pressure, or was manually misconfigured.
 
+**Automatic recovery (after pulling latest ingest + VM scripts):**
+
+| Layer | Behavior |
+|-------|----------|
+| Redis entrypoint | Runs `REPLICAOF NO ONE` on every container start |
+| Docker healthcheck | Fails unless Redis is `role:master` and accepts writes |
+| VM watchdog cron | Every 2 min: promote Redis if needed; `pm2:restart` if writes still fail |
+| Ingest worker / API | Heartbeat every 60s; exit after 3 consecutive READONLY errors (PM2 restarts) |
+| `GET /health` | Returns 503 when Redis is not writable |
+
+Upgrade an existing VM without re-running full setup:
+
+```bash
+sudo bash /path/to/aotracker/deploy/vm/install-redis-watchdog.sh
+cd /home/ubuntu/ingest && git pull && npm ci && npm run pm2:restart
+```
+
+**Manual recovery** (if auto-recovery has not been deployed yet):
+
 ```bash
 cd /opt/albion-postgres
 docker compose ps
@@ -153,12 +172,14 @@ docker exec albion-redis redis-cli INFO replication | grep role
 docker exec albion-redis redis-cli REPLICAOF NO ONE
 
 # Restart ingest after Redis is writable:
-npm run pm2:restart
+cd /home/ubuntu/ingest && npm run pm2:restart
 ```
+
+Watchdog log: `/var/log/redis-watchdog.log`
 
 To cap Redis memory (production template: **2 GB** container, **1800 MB** `maxmemory`), ensure `/opt/albion-postgres/docker-compose.yml` matches [docker-compose.prod.yml](../../../deploy/vm/docker-compose.prod.yml):
 
-`redis-server --appendonly yes --maxmemory 1800mb --maxmemory-policy noeviction` with `mem_limit: 2g`
+`redis-server --appendonly yes --maxmemory 1800mb --maxmemory-policy noeviction` with `mem_limit: 2g` (via [redis-entrypoint.sh](../../../deploy/vm/redis-entrypoint.sh))
 
 To **expand Redis** on the 24 GB VM, raise both `mem_limit` and `maxmemory` in `/opt/albion-postgres/docker-compose.yml`, then `docker compose up -d redis`. Example production values: `mem_limit: 2g`, `--maxmemory 1800mb`.
 

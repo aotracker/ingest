@@ -1,6 +1,6 @@
 import os from "node:os";
 import { statfs } from "node:fs/promises";
-import { getRedisConnection } from "./jobs/connection";
+import { checkRedisWritable } from "./jobs/connection";
 
 export type MemoryInfo = {
   rssBytes: number;
@@ -88,18 +88,7 @@ export async function collectDiskInfo(mount = "/"): Promise<DiskInfo | null> {
 }
 
 export async function pingRedis(): Promise<ServiceStatus> {
-  const start = Date.now();
-  try {
-    const redis = getRedisConnection();
-    await redis.ping();
-    return { ok: true, latencyMs: Date.now() - start, error: null };
-  } catch (err) {
-    return {
-      ok: false,
-      latencyMs: null,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
+  return checkRedisWritable();
 }
 
 export async function collectFullSystemInfo(): Promise<RuntimeSystemInfo> {

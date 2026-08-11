@@ -4,7 +4,11 @@ import {
   isRegionEnabled,
   type AlbionRegion,
 } from "@aotracker/core/albion/types";
-import { createRedisConnection, assertRedisWritable } from "./jobs/connection";
+import {
+  createRedisConnection,
+  assertRedisWritable,
+  startRedisHealthMonitor,
+} from "./jobs/connection";
 import { QUEUE_NAMES } from "./jobs/types";
 import {
   getIngestQueue,
@@ -204,6 +208,8 @@ async function main(): Promise<void> {
   await assertRedisWritable();
   console.log("[worker] Redis write check OK");
 
+  const stopRedisHealthMonitor = startRedisHealthMonitor();
+
   const workers: Worker[] = [];
 
   if (mode === "scheduler") {
@@ -234,6 +240,7 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
+  stopRedisHealthMonitor();
   console.log("[worker] Closing workers…");
   await Promise.all(workers.map((w) => w.close()));
   console.log("[worker] Stopped");

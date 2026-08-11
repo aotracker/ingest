@@ -21,7 +21,11 @@ import {
   getLiveSearchJobInfo,
   getQueueStatuses,
 } from "./jobs/status";
-import { assertRedisWritable } from "./jobs/connection";
+import {
+  assertRedisWritable,
+  checkRedisWritable,
+  startRedisHealthMonitor,
+} from "./jobs/connection";
 import { collectFullSystemInfo, pingRedis } from "./system-info";
 
 const PORT = parseInt(process.env.INGEST_API_PORT ?? "3001", 10);
@@ -84,8 +88,17 @@ function parseRegions(value: unknown): AlbionRegion[] | null {
 const app = express();
 app.use(express.json());
 
-app.get("/health", (_req, res) => {
-  res.json({ ok: true });
+app.get("/health", async (_req, res) => {
+  const redis = await checkRedisWritable();
+  if (!redis.ok) {
+    res.status(503).json({
+      ok: false,
+      redis,
+      error: redis.error ?? "Redis is not writable",
+    });
+    return;
+  }
+  res.json({ ok: true, redis });
 });
 
 app.use(verifyAuth);
@@ -287,6 +300,7 @@ app.get("/system", async (_req, res) => {
 
 async function start(): Promise<void> {
   await assertRedisWritable();
+  startRedisHealthMonitor();
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[ingest-api] Listening on 0.0.0.0:${PORT}`);
   });

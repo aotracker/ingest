@@ -24,8 +24,9 @@ sudo systemctl disable albion-ingest-worker albion-battle-evict.timer
 # 3. Start PM2
 bash deploy/vm/pm2-setup.sh
 
-# 4. Configure boot persistence (run the sudo command printed by pm2-setup.sh)
-sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu
+# 4. Configure boot persistence (run as ubuntu — PM2 prints the exact sudo command)
+npx pm2 startup systemd -u ubuntu --hp /home/ubuntu
+# Copy/paste the sudo command PM2 prints (it includes the path to node_modules/.bin/pm2)
 npx pm2 save
 
 # 5. Verify
