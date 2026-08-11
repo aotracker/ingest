@@ -21,6 +21,7 @@ import {
   getLiveSearchJobInfo,
   getQueueStatuses,
 } from "./jobs/status";
+import { getWorkerConnectivity } from "./jobs/worker-connectivity";
 import {
   assertRedisWritable,
   checkRedisWritable,
@@ -284,6 +285,11 @@ app.get(
 app.get("/jobs/queues", async (_req, res) => {
   const snapshot = await getQueueStatuses();
   res.json(snapshot);
+});
+
+app.get("/jobs/workers", async (_req, res) => {
+  const connectivity = await getWorkerConnectivity();
+  res.json(connectivity);
 });
 
 app.get("/system", async (_req, res) => {
