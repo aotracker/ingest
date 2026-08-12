@@ -1,6 +1,38 @@
 import { cache } from "../cache";
 import { classifyContentType } from "./classify";
-import type { AlbionEvent, AlbionPlayerRef, AlbionRegion } from "./types";
+import {
+  type AlbionEvent,
+  type AlbionPlayerRef,
+  type AlbionRegion,
+  type EquipmentSlot,
+} from "./types";
+
+/**
+ * Full loadout slots for kill cards / profile activity.
+ * Primary combat gear first; mount/bag/consumables shown on a second row.
+ */
+export const KILL_CARD_PRIMARY_SLOTS = [
+  "MainHand",
+  "OffHand",
+  "Head",
+  "Armor",
+  "Shoes",
+  "Cape",
+] as const satisfies readonly EquipmentSlot[];
+
+export const KILL_CARD_SECONDARY_SLOTS = [
+  "Mount",
+  "Bag",
+  "Food",
+  "Potion",
+] as const satisfies readonly EquipmentSlot[];
+
+export const KILL_CARD_BUILD_SLOTS = [
+  ...KILL_CARD_PRIMARY_SLOTS,
+  ...KILL_CARD_SECONDARY_SLOTS,
+] as const satisfies readonly EquipmentSlot[];
+
+export type KillCardBuildSlot = (typeof KILL_CARD_BUILD_SLOTS)[number];
 
 export interface KillCardEvent {
   eventId: number;
@@ -12,11 +44,15 @@ export interface KillCardEvent {
     albionId: string;
     name: string;
     guild?: { name: string; albionId?: string } | null;
+    /** Alliance tag at time of kill from event payload; omit when none. */
+    allianceTag?: string | null;
   } | null;
   victim?: {
     albionId: string;
     name: string;
     guild?: { name: string; albionId?: string } | null;
+    /** Alliance tag at time of kill from event payload; omit when none. */
+    allianceTag?: string | null;
   } | null;
   items?: {
     ownerRole: string;
@@ -37,14 +73,16 @@ function extractDisplayItems(
 ) {
   if (!player) return [];
 
-  const items: KillCardEvent["items"] = [];
+  const items: NonNullable<KillCardEvent["items"]> = [];
 
-  if (player.Equipment?.MainHand?.Type) {
+  for (const slot of KILL_CARD_BUILD_SLOTS) {
+    const equipped = player.Equipment?.[slot];
+    if (!equipped?.Type) continue;
     items.push({
       ownerRole,
-      slot: "MainHand",
-      itemType: player.Equipment.MainHand.Type,
-      quality: player.Equipment.MainHand.Quality ?? 0,
+      slot,
+      itemType: equipped.Type,
+      quality: equipped.Quality ?? 0,
       category: "equipment",
     });
   }
@@ -75,6 +113,14 @@ export function guildAtKillFromRef(
     name,
     ...(ref.GuildId ? { albionId: ref.GuildId } : {}),
   };
+}
+
+/** Alliance tag at kill time from event payload; null when the player had no alliance tag. */
+export function allianceTagAtKillFromRef(
+  ref: AlbionPlayerRef | undefined
+): string | null {
+  const tag = ref?.AllianceTag?.trim();
+  return tag || null;
 }
 
 /** Prefer guild from kill payload, then participant row, then player's current guild. */
@@ -120,6 +166,7 @@ export function albionEventToKillCard(
           albionId: event.Killer.Id,
           name: event.Killer.Name ?? "Unknown",
           guild: guildAtKillFromRef(event.Killer),
+          allianceTag: allianceTagAtKillFromRef(event.Killer),
         }
       : null,
     victim: event.Victim?.Id
@@ -127,6 +174,7 @@ export function albionEventToKillCard(
           albionId: event.Victim.Id,
           name: event.Victim.Name ?? "Unknown",
           guild: guildAtKillFromRef(event.Victim),
+          allianceTag: allianceTagAtKillFromRef(event.Victim),
         }
       : null,
     items: [
