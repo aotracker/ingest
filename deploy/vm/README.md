@@ -106,7 +106,6 @@ Or run individual scripts:
 | `npm run db:apply-ops-events` | `ops_events` table |
 | `npm run db:apply-api-request-log-details` | `api_request_logs.details` column |
 | `npm run db:apply-battles-and-participants-idx` | Battles feed + player-analytics indexes |
-| `npm run db:apply-external-feed-cache` | `external_feed_cache` table |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
 

@@ -8,7 +8,6 @@ import {
   CircuitOpenError,
   isCircuitOpenError,
 } from "@aotracker/core/db/api-state";
-import { refreshForumPatchNotesFeed } from "@aotracker/core/db/forum-feed-cache";
 import {
   ingestRegionEvents,
   ingestRecentBattles,
@@ -80,12 +79,5 @@ export async function runHealthChecks(): Promise<void> {
         note: message,
       }).catch(() => undefined);
     }
-  }
-
-  try {
-    await refreshForumPatchNotesFeed();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[health] patch notes refresh failed: ${message}`);
   }
 }
