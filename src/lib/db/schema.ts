@@ -151,6 +151,7 @@ export const battles = pgTable(
   (t) => [
     uniqueIndex("battles_albion_region_idx").on(t.albionBattleId, t.region),
     index("battles_detail_evict_idx").on(t.endTime, t.detailEvictedAt),
+    index("battles_region_start_time_idx").on(t.region, t.startTime),
   ]
 );
 
@@ -206,6 +207,7 @@ export const killParticipants = pgTable(
   (t) => [
     index("kill_participants_event_idx").on(t.eventId),
     index("kill_participants_guild_role_idx").on(t.guildName, t.role),
+    index("kill_participants_player_idx").on(t.playerId),
   ]
 );
 

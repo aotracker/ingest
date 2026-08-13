@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
 import { getAlbionClient } from "@aotracker/core/albion/client";
 import { isHttpNotFoundError } from "@aotracker/core/albion/errors";
@@ -45,31 +45,143 @@ import {
   getAllianceFameFromMemberGuilds,
   incrementEventsIngested,
 } from "@aotracker/core/db/queries-ingest";
-import { shouldUpdateEntity, isSyncStale } from "@aotracker/core/db/sync";
+import {
+  shouldUpdateEntity,
+  isSyncStale,
+  profileFieldsChanged,
+} from "@aotracker/core/db/sync";
 import { toBigInt } from "@aotracker/core/utils";
 import { ensureBattleDetailQueued } from "./jobs/enqueue";
 
+export type IngestEntityCache = {
+  guilds: Map<string, Promise<string | null>>;
+  players: Map<string, Promise<string | null>>;
+};
+
+export function createIngestEntityCache(): IngestEntityCache {
+  return {
+    guilds: new Map(),
+    players: new Map(),
+  };
+}
+
+function entityCacheKey(region: AlbionRegion, albionId: string): string {
+  return `${region}:${albionId}`;
+}
+
+function memoizeEntity(
+  cache: Map<string, Promise<string | null>> | undefined,
+  key: string,
+  load: () => Promise<string | null>
+): Promise<string | null> {
+  if (!cache) return load();
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const pending = load().catch((err) => {
+    cache.delete(key);
+    throw err;
+  });
+  cache.set(key, pending);
+  return pending;
+}
+
+type ExistingKillEventRow = {
+  id: string;
+  detailSyncedAt: Date | null;
+};
+
+async function loadExistingKillEvents(
+  region: AlbionRegion,
+  eventIds: number[]
+): Promise<Map<number, ExistingKillEventRow>> {
+  const uniqueIds = [...new Set(eventIds.filter((id) => Number.isFinite(id)))];
+  const found = new Map<number, ExistingKillEventRow>();
+  if (uniqueIds.length === 0) return found;
+
+  const rows = await db
+    .select({
+      eventId: schema.killEvents.eventId,
+      id: schema.killEvents.id,
+      detailSyncedAt: schema.killEvents.detailSyncedAt,
+    })
+    .from(schema.killEvents)
+    .where(
+      and(
+        eq(schema.killEvents.region, region),
+        inArray(schema.killEvents.eventId, uniqueIds)
+      )
+    );
+
+  for (const row of rows) {
+    found.set(row.eventId, { id: row.id, detailSyncedAt: row.detailSyncedAt });
+  }
+  return found;
+}
+
+type GuildRef = {
+  GuildId?: string;
+  GuildName?: string;
+  AllianceId?: string;
+  AllianceName?: string;
+  AllianceTag?: string;
+};
+
 export async function upsertGuild(
   region: AlbionRegion,
-  ref: { GuildId?: string; GuildName?: string; AllianceId?: string; AllianceName?: string; AllianceTag?: string }
+  ref: GuildRef,
+  cache?: IngestEntityCache
 ) {
   if (!ref.GuildId || !ref.GuildName) return null;
 
+  return memoizeEntity(cache?.guilds, entityCacheKey(region, ref.GuildId), () =>
+    upsertGuildRow(region, ref as GuildRef & { GuildId: string; GuildName: string })
+  );
+}
+
+async function upsertGuildRow(
+  region: AlbionRegion,
+  ref: GuildRef & { GuildId: string; GuildName: string }
+) {
   const existing = await db.query.guilds.findFirst({
     where: and(
       eq(schema.guilds.albionId, ref.GuildId),
       eq(schema.guilds.region, region)
     ),
+    columns: {
+      id: true,
+      name: true,
+      allianceId: true,
+      allianceName: true,
+      allianceTag: true,
+    },
   });
 
   if (existing) {
+    const incoming = {
+      name: ref.GuildName,
+      allianceId: ref.AllianceId ?? existing.allianceId,
+      allianceName: ref.AllianceName ?? existing.allianceName,
+      allianceTag: ref.AllianceTag ?? existing.allianceTag,
+    };
+    if (
+      !profileFieldsChanged(
+        {
+          name: existing.name,
+          allianceId: existing.allianceId,
+          allianceName: existing.allianceName,
+          allianceTag: existing.allianceTag,
+        },
+        incoming,
+        ["name", "allianceId", "allianceName", "allianceTag"]
+      )
+    ) {
+      return existing.id;
+    }
+
     await db
       .update(schema.guilds)
       .set({
-        name: ref.GuildName,
-        allianceId: ref.AllianceId ?? existing.allianceId,
-        allianceName: ref.AllianceName ?? existing.allianceName,
-        allianceTag: ref.AllianceTag ?? existing.allianceTag,
+        ...incoming,
         updatedAt: new Date(),
       })
       .where(eq(schema.guilds.id, existing.id));
@@ -251,13 +363,28 @@ export async function upsertAllianceFromInfo(
 
 export async function upsertPlayer(
   region: AlbionRegion,
-  ref: AlbionPlayerRef
+  ref: AlbionPlayerRef,
+  cache?: IngestEntityCache
 ): Promise<string | null> {
   if (!ref.Id || !ref.Name) return null;
 
+  return memoizeEntity(cache?.players, entityCacheKey(region, ref.Id), () =>
+    upsertPlayerRow(
+      region,
+      ref as AlbionPlayerRef & { Id: string; Name: string },
+      cache
+    )
+  );
+}
+
+async function upsertPlayerRow(
+  region: AlbionRegion,
+  ref: AlbionPlayerRef & { Id: string; Name: string },
+  cache?: IngestEntityCache
+): Promise<string | null> {
   let guildId: string | null = null;
   if (ref.GuildId && ref.GuildName) {
-    guildId = await upsertGuild(region, ref);
+    guildId = await upsertGuild(region, ref, cache);
   }
 
   const existing = await db.query.players.findFirst({
@@ -265,6 +392,15 @@ export async function upsertPlayer(
       eq(schema.players.albionId, ref.Id),
       eq(schema.players.region, region)
     ),
+    columns: {
+      id: true,
+      name: true,
+      guildId: true,
+      allianceId: true,
+      allianceName: true,
+      avatar: true,
+      avatarRing: true,
+    },
   });
 
   // Event participant refs may include KillFame/DeathFame, but those are per-event
@@ -277,13 +413,29 @@ export async function upsertPlayer(
     allianceName: ref.AllianceName ?? null,
     avatar: ref.Avatar ?? null,
     avatarRing: ref.AvatarRing ?? null,
-    updatedAt: new Date(),
   };
 
   if (existing) {
+    if (
+      !profileFieldsChanged(
+        {
+          name: existing.name,
+          guildId: existing.guildId,
+          allianceId: existing.allianceId,
+          allianceName: existing.allianceName,
+          avatar: existing.avatar,
+          avatarRing: existing.avatarRing,
+        },
+        playerData,
+        ["name", "guildId", "allianceId", "allianceName", "avatar", "avatarRing"]
+      )
+    ) {
+      return existing.id;
+    }
+
     await db
       .update(schema.players)
-      .set(playerData)
+      .set({ ...playerData, updatedAt: new Date() })
       .where(eq(schema.players.id, existing.id));
     return existing.id;
   }
@@ -567,16 +719,36 @@ function collectKillEventRelations(event: AlbionEvent): {
   return { allItems, participantInserts };
 }
 
-async function persistKillEventRelations(
+type KillParticipantRow = {
+  playerId: string | null;
+  role: KillEventParticipantInsert["role"];
+  name: string | null;
+  guildName: string | null;
+  averageItemPower: string | null;
+  killFame: number | null;
+  deathFame: number | null;
+  supportHealingDone: number | null;
+  rawPayload: AlbionPlayerRef;
+};
+
+async function resolveKillParticipantRows(
   region: AlbionRegion,
-  killEventUuid: string,
   participantInserts: KillEventParticipantInsert[],
-  allItems: KillEventItemInsert[]
-) {
+  cache?: IngestEntityCache
+): Promise<{
+  rows: KillParticipantRow[];
+  killerId: string | null;
+  victimId: string | null;
+}> {
+  const rows: KillParticipantRow[] = [];
+  let killerId: string | null = null;
+  let victimId: string | null = null;
+
   for (const { role, ref } of participantInserts) {
-    const playerId = ref.Id ? await upsertPlayer(region, ref) : null;
-    await db.insert(schema.killParticipants).values({
-      eventId: killEventUuid,
+    const playerId = ref.Id ? await upsertPlayer(region, ref, cache) : null;
+    if (role === "killer") killerId = playerId;
+    if (role === "victim") victimId = playerId;
+    rows.push({
       playerId,
       role,
       name: ref.Name ?? null,
@@ -589,8 +761,34 @@ async function persistKillEventRelations(
     });
   }
 
+  return { rows, killerId, victimId };
+}
+
+async function insertKillEventChildren(
+  tx: Pick<typeof db, "insert">,
+  killEventUuid: string,
+  participantRows: KillParticipantRow[],
+  allItems: KillEventItemInsert[]
+) {
+  if (participantRows.length > 0) {
+    await tx.insert(schema.killParticipants).values(
+      participantRows.map((row) => ({
+        eventId: killEventUuid,
+        playerId: row.playerId,
+        role: row.role,
+        name: row.name,
+        guildName: row.guildName,
+        averageItemPower: row.averageItemPower,
+        killFame: row.killFame,
+        deathFame: row.deathFame,
+        supportHealingDone: row.supportHealingDone,
+        rawPayload: row.rawPayload,
+      }))
+    );
+  }
+
   if (allItems.length > 0) {
-    await db.insert(schema.killItems).values(
+    await tx.insert(schema.killItems).values(
       allItems.map((item) => ({
         eventId: killEventUuid,
         ownerRole: item.ownerRole,
@@ -683,14 +881,19 @@ export async function upsertKillEventDetail(
   options?: {
     fetchBattleDetail?: boolean;
     battleDetailCache?: Map<number, IngestBattleStats>;
+    entityCache?: IngestEntityCache;
+    existingByEventId?: Map<number, ExistingKillEventRow>;
   }
 ): Promise<boolean> {
-  const existing = await db.query.killEvents.findFirst({
-    where: and(
-      eq(schema.killEvents.eventId, event.EventId),
-      eq(schema.killEvents.region, region)
-    ),
-  });
+  const existing = options?.existingByEventId
+    ? (options.existingByEventId.get(event.EventId) ?? null)
+    : await db.query.killEvents.findFirst({
+        where: and(
+          eq(schema.killEvents.eventId, event.EventId),
+          eq(schema.killEvents.region, region)
+        ),
+        columns: { id: true, detailSyncedAt: true },
+      });
 
   if (existing?.detailSyncedAt) return false;
 
@@ -718,8 +921,13 @@ export async function upsertKillEventDetail(
     battleTotalPlayers: battleDetail?.totalPlayers,
   });
 
-  const killerId = event.Killer ? await upsertPlayer(region, event.Killer) : null;
-  const victimId = event.Victim ? await upsertPlayer(region, event.Victim) : null;
+  const { allItems, participantInserts } = collectKillEventRelations(event);
+  const { rows: participantRows, killerId, victimId } =
+    await resolveKillParticipantRows(
+      region,
+      participantInserts,
+      options?.entityCache
+    );
 
   let battleUuid: string | null = null;
   if (event.BattleId) {
@@ -765,37 +973,41 @@ export async function upsertKillEventDetail(
     detailSyncedAt: now,
   };
 
-  const { allItems, participantInserts } = collectKillEventRelations(event);
+  return db.transaction(async (tx) => {
+    let killEventUuid: string;
 
-  if (existing) {
-    await db
-      .delete(schema.killParticipants)
-      .where(eq(schema.killParticipants.eventId, existing.id));
-    await db.delete(schema.killItems).where(eq(schema.killItems.eventId, existing.id));
-    await db
-      .update(schema.killEvents)
-      .set(eventRow)
-      .where(eq(schema.killEvents.id, existing.id));
-    await persistKillEventRelations(region, existing.id, participantInserts, allItems);
+    if (existing) {
+      await tx
+        .delete(schema.killParticipants)
+        .where(eq(schema.killParticipants.eventId, existing.id));
+      await tx
+        .delete(schema.killItems)
+        .where(eq(schema.killItems.eventId, existing.id));
+      await tx
+        .update(schema.killEvents)
+        .set(eventRow)
+        .where(eq(schema.killEvents.id, existing.id));
+      killEventUuid = existing.id;
+    } else {
+      const [killEvent] = await tx
+        .insert(schema.killEvents)
+        .values({
+          eventId: event.EventId,
+          region,
+          ...eventRow,
+        })
+        .onConflictDoNothing({
+          target: [schema.killEvents.eventId, schema.killEvents.region],
+        })
+        .returning({ id: schema.killEvents.id });
+
+      if (!killEvent) return false;
+      killEventUuid = killEvent.id;
+    }
+
+    await insertKillEventChildren(tx, killEventUuid, participantRows, allItems);
     return true;
-  }
-
-  const [killEvent] = await db
-    .insert(schema.killEvents)
-    .values({
-      eventId: event.EventId,
-      region,
-      ...eventRow,
-    })
-    .onConflictDoNothing({
-      target: [schema.killEvents.eventId, schema.killEvents.region],
-    })
-    .returning({ id: schema.killEvents.id });
-
-  if (!killEvent) return false;
-
-  await persistKillEventRelations(region, killEvent.id, participantInserts, allItems);
-  return true;
+  });
 }
 
 export async function ingestEvent(
@@ -804,6 +1016,8 @@ export async function ingestEvent(
   options?: {
     fetchBattleDetail?: boolean;
     battleDetailCache?: Map<number, IngestBattleStats>;
+    entityCache?: IngestEntityCache;
+    existingByEventId?: Map<number, ExistingKillEventRow>;
   }
 ): Promise<boolean> {
   return upsertKillEventDetail(region, event, options);
@@ -818,13 +1032,29 @@ export async function ingestPlayerHistoryEvents(
     if (event?.EventId) uniqueById.set(event.EventId, event);
   }
 
+  const uniqueEvents = [...uniqueById.values()];
+  const existingByEventId = await loadExistingKillEvents(
+    region,
+    uniqueEvents.map((event) => event.EventId)
+  );
+  const entityCache = createIngestEntityCache();
+
   let ingested = 0;
   let skipped = 0;
   let failed = 0;
 
-  for (const event of uniqueById.values()) {
+  for (const event of uniqueEvents) {
+    if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
+      skipped += 1;
+      continue;
+    }
+
     try {
-      const isNew = await ingestEvent(region, event, { fetchBattleDetail: false });
+      const isNew = await ingestEvent(region, event, {
+        fetchBattleDetail: false,
+        entityCache,
+        existingByEventId,
+      });
       if (isNew) ingested += 1;
       else skipped += 1;
     } catch (err) {
@@ -879,9 +1109,15 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
   try {
     const events = await client.getRecentEvents(region, 50, 0);
     let ingested = 0;
+    let skipped = 0;
     let eventErrors = 0;
     let lastEventError: string | null = null;
     const battleDetailCache = new Map<number, IngestBattleStats>();
+    const entityCache = createIngestEntityCache();
+    const existingByEventId = await loadExistingKillEvents(
+      region,
+      events.map((event) => event.EventId)
+    );
     const total = events.length;
     const startedAt = Date.now();
 
@@ -889,24 +1125,33 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
 
     for (let i = 0; i < events.length; i++) {
       const event = events[i]!;
-      try {
-        const isNew = await ingestEvent(region, event, { battleDetailCache });
-        if (isNew) ingested++;
-      } catch (err) {
-        eventErrors++;
-        lastEventError =
-          err instanceof Error ? err.message : String(err);
-        console.error(
-          `[ingest] Failed event ${event.EventId} in ${region}:`,
-          lastEventError
-        );
+      if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
+        skipped++;
+      } else {
+        try {
+          const isNew = await ingestEvent(region, event, {
+            battleDetailCache,
+            entityCache,
+            existingByEventId,
+          });
+          if (isNew) ingested++;
+          else skipped++;
+        } catch (err) {
+          eventErrors++;
+          lastEventError =
+            err instanceof Error ? err.message : String(err);
+          console.error(
+            `[ingest] Failed event ${event.EventId} in ${region}:`,
+            lastEventError
+          );
+        }
       }
 
       const done = i + 1;
       if (done === total || done % 10 === 0) {
         console.log(
           `[ingest] ${region} events: ${done}/${total} ` +
-            `(new=${ingested} errors=${eventErrors} ` +
+            `(new=${ingested} skipped=${skipped} errors=${eventErrors} ` +
             `${Math.round((Date.now() - startedAt) / 1000)}s)`
         );
       }
