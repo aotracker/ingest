@@ -8,7 +8,7 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 
 - **Redis** — BullMQ job queues (`ingest`, `refresh`, `scheduler`), localhost only in production
 - **Postgres** — app data (shared with Vercel `client/`)
-- **This package** — workers + Express HTTP API on port 3001
+- **This package** — workers + Express HTTP API on port 3001 (production Vercel calls `https://queue.aotracker.net`, not the raw port)
 
 ## Commands
 
@@ -40,7 +40,7 @@ Production: use PM2 — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPL
 | | `client/` (Vercel) | `ingest/` (OVH VM) |
 |--|-------------------|-------------------|
 | Serves web UI | Yes | No |
-| Triggers jobs | Via HTTP (`INGEST_API_URL`) | Enqueues to Redis |
+| Triggers jobs | Via HTTPS (`INGEST_API_URL=https://queue.aotracker.net`) | Enqueues to Redis |
 | Processes BullMQ jobs | No | Yes |
 | Runs ingest poll / health loops | No | Yes |
 

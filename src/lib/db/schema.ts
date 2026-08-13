@@ -331,6 +331,25 @@ export const opsEvents = pgTable(
   ]
 );
 
+export const ALBION_FORUM_PATCH_NOTES_FEED_KEY = "albion-forum-patch-notes";
+
+export interface ForumPatchNoteItem {
+  title: string;
+  url: string;
+  publishedAt: string;
+  excerpt: string;
+}
+
+export const externalFeedCache = pgTable("external_feed_cache", {
+  feedKey: text("feed_key").primaryKey(),
+  items: jsonb("items").$type<ForumPatchNoteItem[]>().notNull(),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
 export const itemMarketPrices = pgTable(
   "item_market_prices",
   {

@@ -106,6 +106,7 @@ Or run individual scripts:
 | `npm run db:apply-ops-events` | `ops_events` table |
 | `npm run db:apply-api-request-log-details` | `api_request_logs.details` column |
 | `npm run db:apply-battles-and-participants-idx` | Battles feed + player-analytics indexes |
+| `npm run db:apply-external-feed-cache` | `external_feed_cache` table |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
 
@@ -113,12 +114,14 @@ For **local dev**, use `npm run db:push` from `client/` against local Docker Pos
 
 ## Vercel connection
 
-Vercel (`client/`) needs network access to this VM:
+Vercel (`client/`) talks to this VM two ways:
 
-| Port | Service | Used by |
+| Path | Service | Used by |
 |------|---------|---------|
-| 5432 | Postgres | Vercel reads/writes app data |
-| 3001 | Ingest HTTP API | Vercel job triggers + queue status |
+| VM **public IP** `:5432` | Postgres (TLS) | `DATABASE_URL` reads/writes |
+| `https://queue.aotracker.net` | Ingest HTTP API | Job triggers + queue status |
+
+The Node process still listens HTTP on `INGEST_API_PORT` (default `3001`). Production Vercel does **not** use `http://VM_IP:3001`; it uses `INGEST_API_URL=https://queue.aotracker.net`. That hostname is DNS-only today (not Cloudflare-proxied). Prefer a Cloudflare Tunnel to `127.0.0.1:3001` and close public `:3001` — see [DEPLOY.md](../../../DEPLOY.md) and [deploy/cloudflare/README.md](../../../deploy/cloudflare/README.md).
 
 Set `DATABASE_URL`, `INGEST_API_URL`, and `INGEST_API_SECRET` on Vercel. Redis (6379) is localhost-only on the VM.
 
