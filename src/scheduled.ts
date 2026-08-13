@@ -86,6 +86,6 @@ export async function runHealthChecks(): Promise<void> {
     await refreshForumPatchNotesFeed();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[health] patch notes RSS refresh failed: ${message}`);
+    console.warn(`[health] patch notes refresh failed: ${message}`);
   }
 }

@@ -4,7 +4,7 @@ import {
   type ForumPatchNoteItem,
 } from "./schema";
 import { db, schema } from "./index";
-import { fetchForumPatchNotesRss } from "../feeds/forum-rss";
+import { fetchAlbionPatchNotes } from "../feeds/albion-patch-notes";
 
 const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -18,13 +18,15 @@ export async function refreshForumPatchNotesFeed(): Promise<void> {
 
   if (
     existing?.fetchedAt &&
+    (existing.items?.length ?? 0) > 0 &&
+    !existing.lastError &&
     Date.now() - existing.fetchedAt.getTime() < REFRESH_INTERVAL_MS
   ) {
     return;
   }
 
   try {
-    const items = await fetchForumPatchNotesRss();
+    const items = await fetchAlbionPatchNotes();
     await upsertFeedCache({
       items,
       fetchedAt: new Date(),
@@ -32,7 +34,7 @@ export async function refreshForumPatchNotesFeed(): Promise<void> {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[patch-notes] forum RSS refresh failed: ${message}`);
+    console.warn(`[patch-notes] refresh failed: ${message}`);
     await upsertFeedCache({
       items: existing?.items ?? [],
       fetchedAt: existing?.fetchedAt ?? null,
