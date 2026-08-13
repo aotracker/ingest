@@ -31,6 +31,7 @@ import {
   RECENT_BATTLES_MIN_PLAYERS,
   RECENT_BATTLES_POLL_LIMIT,
 } from "@aotracker/core/battles-constants";
+import { recordGuildHourActivity } from "@aotracker/core/db/guild-hour-stats";
 import { db, schema } from "@aotracker/core/db";
 import {
   battleMeetsDetailSyncThreshold,
@@ -1006,6 +1007,19 @@ export async function upsertKillEventDetail(
     }
 
     await insertKillEventChildren(tx, killEventUuid, participantRows, allItems);
+    await recordGuildHourActivity(tx, {
+      region,
+      occurredAt: eventRow.occurredAt,
+      contentType,
+      totalVictimKillFame: eventRow.totalVictimKillFame ?? 0,
+      participants: participantRows.map((row) => ({
+        role: row.role,
+        playerAlbionId: row.rawPayload.Id?.trim() || null,
+        guildAlbionId: row.rawPayload.GuildId?.trim() || null,
+        guildName:
+          row.guildName?.trim() || row.rawPayload.GuildName?.trim() || null,
+      })),
+    });
     return true;
   });
 }

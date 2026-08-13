@@ -7,6 +7,7 @@ import {
   numeric,
   jsonb,
   timestamp,
+  date,
   index,
   uniqueIndex,
   pgEnum,
@@ -208,6 +209,68 @@ export const killParticipants = pgTable(
     index("kill_participants_event_idx").on(t.eventId),
     index("kill_participants_guild_role_idx").on(t.guildName, t.role),
     index("kill_participants_player_idx").on(t.playerId),
+  ]
+);
+
+/**
+ * Per-guild UTC hour rollup of PvP activity (unique members, kills, deaths, fame).
+ * Live ingest captures ~50 events / 25 min / region; peak ZvZ can exceed that,
+ * so hour ranks are directional for large guilds and noisy for small ones.
+ */
+export const guildHourStats = pgTable(
+  "guild_hour_stats",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    guildAlbionId: text("guild_albion_id").notNull(),
+    guildName: text("guild_name").notNull(),
+    utcDate: date("utc_date", { mode: "string" }).notNull(),
+    utcHour: integer("utc_hour").notNull(),
+    contentType: contentTypeEnum("content_type").notNull(),
+    uniquePlayers: integer("unique_players").notNull().default(0),
+    kills: integer("kills").notNull().default(0),
+    deaths: integer("deaths").notNull().default(0),
+    fame: bigint("fame", { mode: "number" }).notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("guild_hour_stats_bucket_idx").on(
+      t.region,
+      t.guildAlbionId,
+      t.utcDate,
+      t.utcHour,
+      t.contentType
+    ),
+    index("guild_hour_stats_hour_idx").on(t.region, t.utcHour, t.utcDate),
+    index("guild_hour_stats_guild_idx").on(t.region, t.guildAlbionId, t.utcDate),
+  ]
+);
+
+export const guildHourPlayers = pgTable(
+  "guild_hour_players",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    guildAlbionId: text("guild_albion_id").notNull(),
+    utcDate: date("utc_date", { mode: "string" }).notNull(),
+    utcHour: integer("utc_hour").notNull(),
+    contentType: contentTypeEnum("content_type").notNull(),
+    playerAlbionId: text("player_albion_id").notNull(),
+  },
+  (t) => [
+    uniqueIndex("guild_hour_players_bucket_idx").on(
+      t.region,
+      t.guildAlbionId,
+      t.utcDate,
+      t.utcHour,
+      t.contentType,
+      t.playerAlbionId
+    ),
+    index("guild_hour_players_hour_idx").on(t.region, t.utcHour, t.utcDate),
+    index("guild_hour_players_guild_idx").on(
+      t.region,
+      t.guildAlbionId,
+      t.utcDate
+    ),
   ]
 );
 
