@@ -154,7 +154,13 @@ export async function recordGuildHourActivity(
         schema.guildHourStats.contentType,
       ],
       set: {
-        guildName: sql`excluded.guild_name`,
+        // Keep a real name if a later event only has the guild ID fallback.
+        guildName: sql`CASE
+          WHEN btrim(excluded.guild_name) <> ''
+            AND excluded.guild_name IS DISTINCT FROM excluded.guild_albion_id
+          THEN excluded.guild_name
+          ELSE ${schema.guildHourStats.guildName}
+        END`,
         uniquePlayers: sql`${schema.guildHourStats.uniquePlayers} + excluded.unique_players`,
         kills: sql`${schema.guildHourStats.kills} + excluded.kills`,
         deaths: sql`${schema.guildHourStats.deaths} + excluded.deaths`,
