@@ -16,6 +16,10 @@ import {
   getSchedulerQueue,
 } from "./jobs/queues";
 import {
+  DISCORD_CATCHUP_INTERVAL_MS,
+  HEALTH_CHECK_INTERVAL_MS,
+  INGEST_POLL_INTERVAL_MS,
+  LIVE_EVENTS_INTERVAL_MS,
   recordWorkerRunError,
   recordWorkerRunSuccess,
 } from "@aotracker/core/jobs/worker-state";
@@ -29,10 +33,10 @@ import { recordOpsEvent } from "@aotracker/core/ops/events";
  * Discovery poll interval. Must be longer than a typical poll (~15–20m under load)
  * so BullMQ's next repeat does not pile up while the previous run is still active.
  */
-const INGEST_LOOP_MS = 25 * 60 * 1000;
-const HEALTH_LOOP_MS = 5 * 60 * 1000;
-const LIVE_EVENTS_LOOP_MS = 45 * 1000;
-const DISCORD_CATCHUP_LOOP_MS = 5 * 60 * 1000;
+const INGEST_LOOP_MS = INGEST_POLL_INTERVAL_MS;
+const HEALTH_LOOP_MS = HEALTH_CHECK_INTERVAL_MS;
+const LIVE_EVENTS_LOOP_MS = LIVE_EVENTS_INTERVAL_MS;
+const DISCORD_CATCHUP_LOOP_MS = DISCORD_CATCHUP_INTERVAL_MS;
 /** Lock must outlive the slowest ingest poll; default BullMQ lock is only 30s. */
 const SCHEDULER_LOCK_MS = 40 * 60 * 1000;
 const SCHEDULER_LOCK_RENEW_MS = 60 * 1000;
@@ -233,8 +237,20 @@ async function startSchedulerWorker(): Promise<Worker> {
       if (job.name === "live-events-poll") {
         if (liveEventsInFlight) return;
         liveEventsInFlight = true;
+        const startedAt = Date.now();
         try {
           await runLiveEventsPoll();
+          await recordWorkerRunSuccess("live-events", {
+            task: "live-events",
+            source,
+            durationMs: Date.now() - startedAt,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await recordWorkerRunError("live-events", message).catch(
+            () => undefined
+          );
+          throw err;
         } finally {
           liveEventsInFlight = false;
         }
@@ -244,11 +260,24 @@ async function startSchedulerWorker(): Promise<Worker> {
       if (job.name === "discord-guild-catchup") {
         if (discordCatchupInFlight) return;
         discordCatchupInFlight = true;
+        const startedAt = Date.now();
         try {
           await runDiscordGuildCatchup();
+          await recordWorkerRunSuccess("discord-catchup", {
+            task: "discord-catchup",
+            source,
+            durationMs: Date.now() - startedAt,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await recordWorkerRunError("discord-catchup", message).catch(
+            () => undefined
+          );
+          throw err;
         } finally {
           discordCatchupInFlight = false;
         }
+        return;
       }
     },
     {
@@ -340,7 +369,9 @@ async function main(): Promise<void> {
   const workers: Worker[] = [];
 
   if (mode === "scheduler") {
-    console.log("[worker] Starting scheduler (ingest + health repeatable jobs)");
+    console.log(
+      "[worker] Starting scheduler (ingest, live events, health, discord catch-up)"
+    );
     workers.push(await startSchedulerWorker());
   } else if (mode === "process") {
     console.log(

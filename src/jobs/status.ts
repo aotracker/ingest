@@ -171,6 +171,10 @@ function summarizePayload(payload: unknown): Record<string, unknown> {
     "eventId",
     "battleId",
     "playerId",
+    "feedId",
+    "searchQuery",
+    "entityType",
+    "entityName",
   ]) {
     if (source[key] != null && source[key] !== "") {
       out[key] = source[key];
