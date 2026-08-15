@@ -16,7 +16,7 @@ npm ci
 echo "==> Applying pending schema migrations…"
 npm run db:apply-pending
 
-echo "==> Reloading PM2 apps (starts missing apps such as ingest-scheduler)…"
+echo "==> Reloading runtime PM2 apps (never battle-evict)…"
 npm run pm2:startOrReload
 
 echo "==> Saving PM2 process list…"

@@ -26,8 +26,30 @@ function loadIngestEnv() {
 
 loadIngestEnv();
 
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
+function resolveLogDir() {
+  const homeLogs = path.join(
+    process.env.HOME || "/home/ubuntu",
+    ".pm2",
+    "logs"
+  );
+  const candidates = [logDir, homeLogs];
+  for (const dir of candidates) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return dir;
+    } catch {
+      // try the next writable location
+    }
+  }
+  return logDir;
+}
+
+const resolvedLogDir = resolveLogDir();
+if (resolvedLogDir !== logDir) {
+  console.warn(
+    `[ecosystem] ${logDir} is not writable; using ${resolvedLogDir}`
+  );
 }
 
 function longRunning(name, scriptArgs, extra = {}) {
@@ -43,11 +65,11 @@ function longRunning(name, scriptArgs, extra = {}) {
     min_uptime: "15s",
     exp_backoff_restart_delay: 200,
     max_memory_restart: extra.max_memory_restart ?? "1G",
-    merge_logs: false,
+    merge_logs: true,
     time: true,
     log_date_format: "YYYY-MM-DD HH:mm:ss Z",
-    out_file: path.join(logDir, `${name}-out.log`),
-    error_file: path.join(logDir, `${name}-error.log`),
+    out_file: path.join(resolvedLogDir, `${name}-out.log`),
+    error_file: path.join(resolvedLogDir, `${name}-error.log`),
     vizion: false,
     env: { NODE_ENV: "production", ...extraEnv },
     ...rest,
@@ -77,11 +99,11 @@ const coreApps = [
     interpreter: "node",
     autorestart: false,
     cron_restart: "30 5 * * 0",
-    merge_logs: false,
+    merge_logs: true,
     time: true,
     log_date_format: "YYYY-MM-DD HH:mm:ss Z",
-    out_file: path.join(logDir, "battle-evict-out.log"),
-    error_file: path.join(logDir, "battle-evict-error.log"),
+    out_file: path.join(resolvedLogDir, "battle-evict-out.log"),
+    error_file: path.join(resolvedLogDir, "battle-evict-error.log"),
     vizion: false,
     env: { NODE_ENV: "production", TZ: "UTC" },
   },

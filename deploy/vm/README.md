@@ -109,26 +109,22 @@ npx pm2 save
 
 ### One-time cutover (combined worker → split)
 
-After pulling this change on a VM that already had the old combined `ingest-worker` (`worker.ts all`):
+Do **not** run `npx pm2 startOrReload ecosystem.config.cjs` by itself. That reloads `battle-evict` (runs eviction immediately) and fails if `logs/` is not writable or old PIDs are gone.
 
 ```bash
 cd /home/ubuntu/ingest
 git pull && npm ci
-mkdir -p logs
-npx pm2 startOrReload ecosystem.config.cjs --update-env
-npx pm2 save
-npm run pm2:status
-# expect ingest-api, ingest-scheduler, ingest-worker, battle-evict
+# Stop accidental eviction first if a previous reload started it
+npx pm2 stop battle-evict
+sudo chown -R ubuntu:ubuntu logs
+chmod u+rwx logs
+bash deploy/vm/pm2-resync.sh
 curl -s http://127.0.0.1:3001/health
 ```
 
-If `ingest-worker` still looks like the old combined process, fall back to:
+`pm2-resync.sh` deletes dead runtime apps, starts `ingest-api` / `ingest-scheduler` / `ingest-worker` (and discord/regionals if enabled), and leaves `battle-evict` **stopped** until Sun 05:30 UTC.
 
-```bash
-npx pm2 delete ingest-worker
-npx pm2 start ecosystem.config.cjs
-npx pm2 save
-```
+If `logs/` is owned by root (`EACCES: permission denied, open '.../logs/...'`), `chown` as above. The ecosystem falls back to `~/.pm2/logs` when `ingest/logs` is not writable.
 
 ## Schema migrations (production)
 
