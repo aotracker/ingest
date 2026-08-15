@@ -37,11 +37,24 @@ fi
 echo "==> Installing dependencies…"
 npm ci
 
+mkdir -p logs
+
 echo "==> Starting PM2 apps…"
 npm run pm2:start
 
 echo "==> Saving PM2 process list…"
 npx pm2 save
+
+echo "==> Configuring pm2-logrotate…"
+if [[ -d "$HOME/.pm2/modules/pm2-logrotate" ]]; then
+  echo "    pm2-logrotate already installed"
+else
+  npx pm2 install pm2-logrotate
+fi
+npx pm2 set pm2-logrotate:max_size 20M
+npx pm2 set pm2-logrotate:retain 14
+npx pm2 set pm2-logrotate:compress true
+npx pm2 set pm2-logrotate:dateFormat YYYY-MM-DD_HH-mm-ss
 
 if systemctl is-enabled pm2-ubuntu.service >/dev/null 2>&1; then
   echo "==> PM2 startup already configured (pm2-ubuntu.service)."

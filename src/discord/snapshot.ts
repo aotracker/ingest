@@ -19,15 +19,16 @@ import { estimateItemsSilver } from "./silver";
 
 const S = 1.6;
 const T = 2.2;
+const TF = 2.0;
 function u(n: number): number {
   return Math.round(n * S);
 }
 function tx(n: number): number {
-  return Math.round(n * T);
+  return Math.round(n * TF);
 }
 
-const ICON = tx(60);
-const GAP = tx(8);
+const ICON = Math.round(60 * T);
+const GAP = Math.round(8 * T);
 const CELL = ICON + GAP;
 const COL_WIDTH = CELL * 2 + ICON;
 const WIDTH = u(1200);

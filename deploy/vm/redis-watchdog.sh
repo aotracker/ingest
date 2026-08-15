@@ -28,15 +28,36 @@ if docker exec "$REDIS_CONTAINER" redis-cli SET ingest:watchdog:ping 1 EX 60 >/d
   exit 0
 fi
 
-log "Redis write check failed — restarting ingest PM2 apps"
-if [[ -d "$INGEST_DIR" ]]; then
-  if (cd "$INGEST_DIR" && npm run pm2:restart >>"$LOG_FILE" 2>&1); then
-    log "pm2:restart completed"
-  else
-    log "pm2:restart failed — see $LOG_FILE"
-    exit 1
-  fi
-else
+log "Redis write check failed — restarting ingest PM2 runtime apps"
+if [[ ! -d "$INGEST_DIR" ]]; then
   log "INGEST_DIR $INGEST_DIR not found"
+  exit 1
+fi
+
+# Never `pm2 restart ecosystem.config.cjs` — that also runs battle-evict.
+runtime_apps=(
+  ingest-api
+  ingest-scheduler
+  ingest-worker
+  discord-bot
+  ingest-worker-americas
+  ingest-worker-europe
+)
+to_restart=()
+for name in "${runtime_apps[@]}"; do
+  if (cd "$INGEST_DIR" && npx pm2 describe "$name" >/dev/null 2>&1); then
+    to_restart+=("$name")
+  fi
+done
+
+if [[ ${#to_restart[@]} -eq 0 ]]; then
+  log "No ingest PM2 runtime apps found"
+  exit 1
+fi
+
+if (cd "$INGEST_DIR" && npx pm2 restart "${to_restart[@]}" >>"$LOG_FILE" 2>&1); then
+  log "pm2 restart completed: ${to_restart[*]}"
+else
+  log "pm2 restart failed — see $LOG_FILE"
   exit 1
 fi

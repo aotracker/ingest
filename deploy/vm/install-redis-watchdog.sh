@@ -43,8 +43,19 @@ else
 fi
 
 if [[ -d "$INGEST_DIR" && -f "$INGEST_DIR/package.json" ]]; then
-  echo "==> Restart ingest PM2 apps"
-  sudo -u ubuntu bash -c "cd '$INGEST_DIR' && npm run pm2:restart"
+  echo "==> Restart ingest PM2 runtime apps (not battle-evict)"
+  sudo -u ubuntu bash -c "
+    cd '$INGEST_DIR'
+    names=()
+    for name in ingest-api ingest-scheduler ingest-worker discord-bot ingest-worker-americas ingest-worker-europe; do
+      if npx pm2 describe \"\$name\" >/dev/null 2>&1; then
+        names+=(\"\$name\")
+      fi
+    done
+    if [[ \${#names[@]} -gt 0 ]]; then
+      npx pm2 restart \"\${names[@]}\"
+    fi
+  "
 fi
 
 echo ""

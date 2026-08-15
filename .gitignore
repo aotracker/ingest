@@ -16,3 +16,6 @@ debug-*.log
 
 # typescript
 *.tsbuildinfo
+
+# PM2 app logs (directory kept via logs/.gitkeep)
+logs/*.log

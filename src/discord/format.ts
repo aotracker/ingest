@@ -1,5 +1,26 @@
+const UTC_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+] as const;
+
 export function formatUtcStamp(date: Date): string {
-  return `${date.toISOString().replace("T", " ").slice(0, 16)} UTC`;
+  const month = UTC_MONTHS[date.getUTCMonth()] ?? "January";
+  const day = date.getUTCDate();
+  const year = date.getUTCFullYear();
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mm = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${month} ${day}, ${year} at ${hh}:${mm}:${ss} UTC`;
 }
 
 export function formatFame(value: number | null | undefined): string {

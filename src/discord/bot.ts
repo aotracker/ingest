@@ -25,6 +25,7 @@ import {
 } from "@aotracker/core/jobs/worker-state";
 
 const HEARTBEAT_MS = 30_000;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 function heartbeatPayload(client: Client): Record<string, unknown> {
   return {
@@ -36,7 +37,7 @@ function heartbeatPayload(client: Client): Record<string, unknown> {
   };
 }
 
-function startHeartbeat(client: Client): NodeJS.Timeout {
+function startHeartbeat(client: Client): void {
   const beat = () => {
     if (!client.isReady() || !client.user) return;
     void recordDiscordBotHeartbeat(heartbeatPayload(client)).catch((err) => {
@@ -47,7 +48,16 @@ function startHeartbeat(client: Client): NodeJS.Timeout {
     });
   };
   beat();
-  return setInterval(beat, HEARTBEAT_MS);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = setInterval(beat, HEARTBEAT_MS);
+}
+
+export async function stopDiscordBot(client: Client): Promise<void> {
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+  await client.destroy();
 }
 
 function commandBody() {

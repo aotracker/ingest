@@ -78,9 +78,9 @@ sudo systemctl enable --now albion-battle-evict.timer
 
 | Before (systemd) | After (PM2) |
 |------------------|-------------|
-| Single unit runs `npm start` (API + worker via `start.ts`) | Separate `ingest-api` and `ingest-worker` apps |
-| `journalctl -u albion-ingest-worker` | `npm run pm2:logs` |
-| `systemctl restart albion-ingest-worker` | `npm run pm2:reload` or `bash deploy/vm/pm2-deploy.sh` |
+| Single unit runs `npm start` (API + worker via `start.ts`) | Separate `ingest-api`, `ingest-scheduler`, and `ingest-worker` apps |
+| `journalctl -u albion-ingest-worker` | `npm run pm2:logs -- ingest-scheduler` / `ingest-worker` |
+| `systemctl restart albion-ingest-worker` | `npm run pm2:startOrReload` or `bash deploy/vm/pm2-deploy.sh` |
 | Weekly eviction timer with ±30m jitter | PM2 cron at Sun 05:30 UTC (no jitter) |
 
 Legacy systemd unit files are kept in [`legacy/`](legacy/) for reference.

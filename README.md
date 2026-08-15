@@ -14,11 +14,11 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 
 | Command | What it does |
 |---------|----------------|
-| `npm run start` | HTTP API + scheduler + job processors (local dev) |
-| `npm run worker` | Scheduler (ingest poll, live events, health, Discord catch-up) + job queues |
+| `npm run start` | HTTP API + scheduler + job processors (local dev, single terminal) |
+| `npm run worker` | Combined scheduler + job queues (local only — production PM2 splits these) |
 | `npm run api` | HTTP API for Vercel job triggers and queue status |
-| `npm run worker:process` | Job processors (`ingest` + `refresh` + `discord`) |
-| `npm run worker:scheduler` | Repeatable ingest/health/live-events jobs only |
+| `npm run worker:process` | Job processors (`ingest` + `refresh` + `discord`) — PM2 `ingest-worker` |
+| `npm run worker:scheduler` | Repeatable ingest/health/live-events jobs only — PM2 `ingest-scheduler` |
 | `npm run discord:bot` | Discord gateway + slash commands (`DISCORD_ENABLED=1`) |
 | `npm run db:apply-discord-bot` | Discord servers/feeds/post-log tables |
 | `npm run jobs:ingest` | One-off ingest poll |
@@ -35,7 +35,7 @@ cp .env.example .env   # DATABASE_URL, REDIS_URL, INGEST_API_SECRET
 npm run start          # HTTP API + workers (local dev)
 ```
 
-Production: use PM2 — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPLOY.md](../DEPLOY.md).
+Production: use PM2 (`ingest-api`, `ingest-scheduler`, `ingest-worker`) — see [deploy/vm/README.md](deploy/vm/README.md) and [DEPLOY.md](../DEPLOY.md).
 
 ## Relationship to `client/`
 

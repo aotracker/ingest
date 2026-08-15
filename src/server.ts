@@ -306,9 +306,10 @@ app.get("/system", async (_req, res) => {
 
 async function start(): Promise<void> {
   await assertRedisWritable();
-  startRedisHealthMonitor();
+  const stopRedisHealthMonitor = startRedisHealthMonitor();
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`[ingest-api] Listening on 0.0.0.0:${PORT}`);
+    process.send?.("ready");
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {
@@ -321,6 +322,23 @@ async function start(): Promise<void> {
     }
     process.exit(1);
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[ingest-api] ${signal} received, shutting down…`);
+    stopRedisHealthMonitor();
+    server.close((err) => {
+      if (err) {
+        console.error("[ingest-api] Error during close:", err);
+        process.exit(1);
+      }
+      process.exit(0);
+    });
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 start().catch((err) => {
