@@ -8,6 +8,7 @@ import type {
   AlbionEvent,
   AlbionRegion,
 } from "../albion/types";
+import { battleMeetsRecentIngestThreshold } from "../battles-constants";
 import { toBigInt } from "../utils";
 import { db, schema } from "./index";
 
@@ -275,6 +276,7 @@ export async function clearBattleDetailUnavailable(
  * Upsert list-board stats from Albion `/battles` (recent poll).
  * Stores raw list payload for feed previews when full detail is not cached yet.
  * Never overwrites an existing detailPayload / detailSyncedAt.
+ * New rows are skipped below RECENT_BATTLES_MIN_PLAYERS; existing rows still update.
  */
 export async function upsertBattleFromRecentList(
   region: AlbionRegion,
@@ -293,6 +295,13 @@ export async function upsertBattleFromRecentList(
   const listPayload = battle as unknown as Record<string, unknown>;
 
   const existing = await getBattleByAlbionId(region, albionBattleId);
+
+  if (
+    !existing &&
+    !battleMeetsRecentIngestThreshold(totalPlayers ?? 0)
+  ) {
+    return null;
+  }
 
   if (existing) {
     const hasDetail = existing.detailPayload != null;

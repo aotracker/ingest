@@ -27,8 +27,8 @@ import {
   isRegionEnabled,
 } from "@aotracker/core/albion/types";
 import {
+  battleMeetsRecentIngestThreshold,
   RECENT_BATTLES_MIN_FAME,
-  RECENT_BATTLES_MIN_PLAYERS,
   RECENT_BATTLES_POLL_LIMIT,
 } from "@aotracker/core/battles-constants";
 import { recordGuildHourActivity } from "@aotracker/core/db/guild-hour-stats";
@@ -498,6 +498,7 @@ async function findBattleUuid(
 
 /**
  * Upsert a battle row confirmed via Albion `/battles/{id}`.
+ * New rows below RECENT_BATTLES_MIN_PLAYERS are not inserted.
  * Only queues detail sync when `queueDetailSync` is true and the battle meets
  * the size threshold (≥3 players or ≥3 kills).
  */
@@ -506,7 +507,7 @@ async function upsertBattle(
   albionBattleId: number,
   battleData?: { totalPlayers?: number; totalKills?: number; totalFame?: number },
   options?: { queueDetailSync?: boolean }
-) {
+): Promise<string | null> {
   const queueDetailSync = options?.queueDetailSync === true;
   const existing = await db.query.battles.findFirst({
     where: and(
@@ -521,6 +522,13 @@ async function upsertBattle(
       detailPayload: true,
     },
   });
+
+  if (
+    !existing &&
+    !battleMeetsRecentIngestThreshold(battleData?.totalPlayers ?? 0)
+  ) {
+    return null;
+  }
 
   if (existing) {
     const mergedPlayers = existing.totalPlayers ?? battleData?.totalPlayers;
@@ -934,7 +942,7 @@ export async function upsertKillEventDetail(
   if (event.BattleId) {
     if (battleDetail) {
       const eligible = battleMeetsDetailSyncThreshold(battleDetail);
-      // Always keep kill → battle linkage; only queue detail sync when large enough.
+      // Insert/link only at the ingest player floor; keep albionBattleId on the kill either way.
       battleUuid = await upsertBattle(
         region,
         event.BattleId,
@@ -945,7 +953,8 @@ export async function upsertKillEventDetail(
         },
         { queueDetailSync: eligible }
       );
-      if (!eligible) {
+      // Skip stubbing unavailable for battles we refused to insert (< ingest floor).
+      if (!eligible && battleUuid) {
         await markBattleDetailUnavailable(
           region,
           event.BattleId,
@@ -1032,9 +1041,22 @@ export async function ingestEvent(
     battleDetailCache?: Map<number, IngestBattleStats>;
     entityCache?: IngestEntityCache;
     existingByEventId?: Map<number, ExistingKillEventRow>;
+    notifyDiscord?: boolean;
   }
 ): Promise<boolean> {
-  return upsertKillEventDetail(region, event, options);
+  const isNew = await upsertKillEventDetail(region, event, options);
+  if (isNew && options?.notifyDiscord) {
+    try {
+      const { emitKillIngested } = await import("./discord/dispatcher");
+      await emitKillIngested(region, event);
+    } catch (err) {
+      console.warn(
+        `[discord] emit failed for ${region}/${event.EventId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+  return isNew;
 }
 
 export async function ingestPlayerHistoryEvents(
@@ -1104,7 +1126,10 @@ export async function ensureKillEventInDb(
   }
 }
 
-export async function ingestRegionEvents(region: AlbionRegion): Promise<number> {
+export async function ingestRegionEvents(
+  region: AlbionRegion,
+  options?: { battleDetailCache?: Map<number, IngestBattleStats> }
+): Promise<number> {
   if (!isRegionEnabled(region)) return 0;
   const client = getAlbionClient();
 
@@ -1126,7 +1151,8 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
     let skipped = 0;
     let eventErrors = 0;
     let lastEventError: string | null = null;
-    const battleDetailCache = new Map<number, IngestBattleStats>();
+    const battleDetailCache =
+      options?.battleDetailCache ?? new Map<number, IngestBattleStats>();
     const entityCache = createIngestEntityCache();
     const existingByEventId = await loadExistingKillEvents(
       region,
@@ -1147,6 +1173,7 @@ export async function ingestRegionEvents(region: AlbionRegion): Promise<number> 
             battleDetailCache,
             entityCache,
             existingByEventId,
+            notifyDiscord: true,
           });
           if (isNew) ingested++;
           else skipped++;
@@ -1662,14 +1689,20 @@ export async function ensureSyncStates() {
 }
 
 /**
- * Poll Albion recent battles: upsert all list rows for player-count cache (event ingest),
- * then queue detail sync only for fame > 0 and players ≥ threshold.
+ * Poll Albion recent battles: persist rows at ≥ RECENT_BATTLES_MIN_PLAYERS,
+ * return list stats (including sub-threshold fights) so event ingest can
+ * classify without `/battles/{id}`, then queue detail sync for fame > 0
+ * fights that meet the player floor.
  */
 export async function ingestRecentBattles(region: AlbionRegion): Promise<{
   fetched: number;
   kept: number;
+  statsCache: Map<number, IngestBattleStats>;
 }> {
-  if (!isRegionEnabled(region)) return { fetched: 0, kept: 0 };
+  const statsCache = new Map<number, IngestBattleStats>();
+  if (!isRegionEnabled(region)) {
+    return { fetched: 0, kept: 0, statsCache };
+  }
 
   const client = getAlbionClient();
   const battles = await client.getBattlesRaw(region, {
@@ -1684,14 +1717,23 @@ export async function ingestRecentBattles(region: AlbionRegion): Promise<{
     const albionBattleId = battle.id ?? battle.albionId;
     if (albionBattleId == null) continue;
 
-    await upsertBattleFromRecentList(region, battle);
-
     const fame = battle.totalFame ?? 0;
     const players =
       battle.totalPlayers ??
       (battle.players ? Object.keys(battle.players).length : 0);
 
-    if (fame <= RECENT_BATTLES_MIN_FAME || players < RECENT_BATTLES_MIN_PLAYERS) {
+    statsCache.set(albionBattleId, {
+      totalPlayers: players,
+      totalKills: battle.totalKills,
+      totalFame: battle.totalFame,
+    });
+
+    await upsertBattleFromRecentList(region, battle);
+
+    if (
+      fame <= RECENT_BATTLES_MIN_FAME ||
+      !battleMeetsRecentIngestThreshold(players)
+    ) {
       continue;
     }
 
@@ -1711,5 +1753,5 @@ export async function ingestRecentBattles(region: AlbionRegion): Promise<{
     `[ingest] ${region} recent battles: fetched=${battles.length} kept=${kept}`
   );
 
-  return { fetched: battles.length, kept };
+  return { fetched: battles.length, kept, statsCache };
 }

@@ -9,5 +9,11 @@ export const RELATED_BATTLE_WINDOW_MS = 60 * 60 * 1000;
 export const RECENT_BATTLES_POLL_LIMIT = 50;
 /** Keep recent-list battles with fame strictly above this (i.e. totalFame > 0). */
 export const RECENT_BATTLES_MIN_FAME = 0;
-/** Minimum players for recent-battles feed ingest. */
+/** Minimum players to persist a battle row (ingest + battles feed floor). */
 export const RECENT_BATTLES_MIN_PLAYERS = 10;
+
+export function battleMeetsRecentIngestThreshold(
+  players: number | null | undefined
+): boolean {
+  return players != null && players >= RECENT_BATTLES_MIN_PLAYERS;
+}

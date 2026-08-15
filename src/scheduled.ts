@@ -12,12 +12,15 @@ import {
   ingestRegionEvents,
   ingestRecentBattles,
   ensureSyncStates,
+  type IngestBattleStats,
 } from "./ingest";
 
 async function ingestPollRegion(region: AlbionRegion): Promise<void> {
-  // Recent battles first — list stats populate DB so event ingest can skip /battles/{id}.
+  // Recent battles first — list stats seed event ingest so it can skip /battles/{id}.
+  let battleDetailCache: Map<number, IngestBattleStats> | undefined;
   try {
-    await ingestRecentBattles(region);
+    const recent = await ingestRecentBattles(region);
+    battleDetailCache = recent.statsCache;
   } catch (err) {
     if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
       console.warn(`[ingest] ${region} recent battles skipped — circuit open`);
@@ -27,7 +30,7 @@ async function ingestPollRegion(region: AlbionRegion): Promise<void> {
   }
 
   try {
-    await ingestRegionEvents(region);
+    await ingestRegionEvents(region, { battleDetailCache });
   } catch (err) {
     if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
       console.warn(`[ingest] ${region} events skipped — circuit open`);

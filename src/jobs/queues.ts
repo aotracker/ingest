@@ -33,11 +33,20 @@ export function getSchedulerQueue(): Queue {
   return getQueue(QUEUE_NAMES.SCHEDULER);
 }
 
+export function getDiscordQueue(): Queue {
+  return getQueue(QUEUE_NAMES.DISCORD);
+}
+
 export function queueForJobQueue(queue: string): Queue {
   if (queue === QUEUE_NAMES.INGEST) return getIngestQueue();
   if (queue === QUEUE_NAMES.REFRESH) return getRefreshQueue();
   if (queue === QUEUE_NAMES.SCHEDULER) return getSchedulerQueue();
+  if (queue === QUEUE_NAMES.DISCORD) return getDiscordQueue();
   throw new Error(`Unknown job queue: ${queue}`);
 }
 
-export const ALL_JOB_QUEUES = [QUEUE_NAMES.INGEST, QUEUE_NAMES.REFRESH] as const;
+export const ALL_JOB_QUEUES = [
+  QUEUE_NAMES.INGEST,
+  QUEUE_NAMES.REFRESH,
+  QUEUE_NAMES.DISCORD,
+] as const;

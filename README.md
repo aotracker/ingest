@@ -6,7 +6,7 @@
 
 Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`/opt/albion-postgres/`). Default limits: Postgres **14 GB**, Redis **2 GB** — see [deploy/vm/README.md](./deploy/vm/README.md).
 
-- **Redis** — BullMQ job queues (`ingest`, `refresh`, `scheduler`), localhost only in production
+- **Redis** — BullMQ job queues (`ingest`, `refresh`, `scheduler`, `discord`), localhost only in production
 - **Postgres** — app data (shared with Vercel `client/`)
 - **This package** — workers + Express HTTP API on port 3001 (production Vercel calls `https://queue.aotracker.net`, not the raw port)
 
@@ -15,10 +15,12 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 | Command | What it does |
 |---------|----------------|
 | `npm run start` | HTTP API + scheduler + job processors (local dev) |
-| `npm run worker` | Scheduler (ingest poll + health) + both job queues |
+| `npm run worker` | Scheduler (ingest poll, live events, health, Discord catch-up) + job queues |
 | `npm run api` | HTTP API for Vercel job triggers and queue status |
-| `npm run worker:process` | Job processors only (`ingest` + `refresh`) |
-| `npm run worker:scheduler` | Repeatable ingest/health jobs only |
+| `npm run worker:process` | Job processors (`ingest` + `refresh` + `discord`) |
+| `npm run worker:scheduler` | Repeatable ingest/health/live-events jobs only |
+| `npm run discord:bot` | Discord gateway + slash commands (`DISCORD_ENABLED=1`) |
+| `npm run db:apply-discord-bot` | Discord servers/feeds/post-log tables |
 | `npm run jobs:ingest` | One-off ingest poll |
 | `npm run jobs:health` | One-off API health check |
 | `npm run db:evict-battle-details` | Weekly battle JSON eviction |

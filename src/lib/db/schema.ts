@@ -414,6 +414,76 @@ export const itemMarketPrices = pgTable(
   ]
 );
 
+export const discordServers = pgTable("discord_servers", {
+  discordGuildId: text("discord_guild_id").primaryKey(),
+  name: text("name"),
+  installedAt: timestamp("installed_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+  leftAt: timestamp("left_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
+});
+
+export const discordFeeds = pgTable(
+  "discord_feeds",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    discordGuildId: text("discord_guild_id")
+      .references(() => discordServers.discordGuildId, { onDelete: "cascade" })
+      .notNull(),
+    feedType: text("feed_type").notNull(),
+    targetType: text("target_type").notNull(),
+    targetAlbionId: text("target_albion_id").notNull(),
+    region: regionEnum("region").notNull(),
+    targetName: text("target_name"),
+    channelId: text("channel_id"),
+    filters: jsonb("filters").notNull().default({}),
+    enabled: integer("enabled").notNull().default(1),
+    createdByUserId: text("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("discord_feeds_unique_idx").on(
+      t.discordGuildId,
+      t.feedType,
+      t.targetAlbionId,
+      t.region
+    ),
+    index("discord_feeds_target_idx").on(
+      t.targetType,
+      t.targetAlbionId,
+      t.region,
+      t.feedType
+    ),
+    index("discord_feeds_guild_idx").on(t.discordGuildId),
+  ]
+);
+
+export const discordPostLog = pgTable(
+  "discord_post_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    feedId: uuid("feed_id")
+      .references(() => discordFeeds.id, { onDelete: "cascade" })
+      .notNull(),
+    eventKey: text("event_key").notNull(),
+    discordMessageId: text("discord_message_id"),
+    postedAt: timestamp("posted_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("discord_post_log_feed_event_idx").on(t.feedId, t.eventKey),
+  ]
+);
+
 export const guildsRelations = relations(guilds, ({ many }) => ({
   players: many(players),
 }));

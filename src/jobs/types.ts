@@ -4,6 +4,7 @@ export const QUEUE_NAMES = {
   INGEST: "ingest",
   REFRESH: "refresh",
   SCHEDULER: "scheduler",
+  DISCORD: "discord",
 } as const;
 
 export type JobQueue = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -21,6 +22,7 @@ export type JobPayload = {
   searchRegions?: AlbionRegion[];
   eventId?: number;
   battleId?: number;
+  feedId?: string;
   /** When true, sync-guild refreshes profile, top kills, and top battles. */
   force?: boolean;
   /** Soft circuit defer count (does not burn attempts until the cap). */

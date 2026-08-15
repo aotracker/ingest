@@ -127,6 +127,11 @@ export async function executeJob(
       }
       return;
     }
+    case "notify-discord": {
+      const { handleNotifyDiscord } = await import("./discord/notify");
+      await handleNotifyDiscord(payload);
+      return;
+    }
     default:
       throw new Error(`Unknown job: ${name}`);
   }

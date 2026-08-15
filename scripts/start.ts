@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const ingestRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const isWindows = process.platform === "win32";
 const apiPort = Number.parseInt(process.env.INGEST_API_PORT ?? "3001", 10);
+const discordEnabled = process.env.DISCORD_ENABLED === "1";
 
 function isPortInUse(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -20,24 +21,8 @@ function isPortInUse(port: number): Promise<boolean> {
   });
 }
 
-function run(name: string, npmScript: string): ChildProcess {
-  const child = spawn("npm", ["run", npmScript], {
-    cwd: ingestRoot,
-    stdio: "inherit",
-    shell: isWindows,
-    env: process.env,
-  });
-
-  child.on("error", (err) => {
-    console.error(`[start] Failed to launch ${name}:`, err);
-    shutdown("SIGTERM");
-    process.exit(1);
-  });
-
-  return child;
-}
-
 const children: ChildProcess[] = [];
+const childNames = new WeakMap<ChildProcess, string>();
 let shuttingDown = false;
 
 function shutdown(signal: NodeJS.Signals) {
@@ -49,6 +34,24 @@ function shutdown(signal: NodeJS.Signals) {
       child.kill(signal);
     }
   }
+}
+
+function run(name: string, npmScript: string): ChildProcess {
+  const child = spawn("npm", ["run", npmScript], {
+    cwd: ingestRoot,
+    stdio: "inherit",
+    shell: isWindows,
+    env: process.env,
+  });
+  childNames.set(child, name);
+
+  child.on("error", (err) => {
+    console.error(`[start] Failed to launch ${name}:`, err);
+    shutdown("SIGTERM");
+    process.exit(1);
+  });
+
+  return child;
 }
 
 async function main(): Promise<void> {
@@ -69,6 +72,9 @@ async function main(): Promise<void> {
   }
 
   children.push(run("api", "api"), run("worker", "worker"));
+  if (discordEnabled) {
+    children.push(run("discord-bot", "discord:bot"));
+  }
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -78,6 +84,13 @@ async function main(): Promise<void> {
       if (shuttingDown) return;
       if (signal) return;
       if (code !== 0 && code !== null) {
+        const name = childNames.get(child) ?? "process";
+        if (name === "discord-bot") {
+          console.error(
+            `[start] Discord bot exited with code ${code} — ingest API/workers keep running`
+          );
+          return;
+        }
         console.error(`[start] Process exited with code ${code}`);
         shutdown("SIGTERM");
         process.exit(code);
@@ -85,7 +98,11 @@ async function main(): Promise<void> {
     });
   }
 
-  console.log("[start] Running ingest HTTP API + BullMQ workers");
+  console.log(
+    discordEnabled
+      ? "[start] Running ingest HTTP API + BullMQ workers + Discord bot"
+      : "[start] Running ingest HTTP API + BullMQ workers"
+  );
 }
 
 main().catch((err) => {

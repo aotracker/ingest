@@ -1,6 +1,29 @@
 const path = require("path");
+const fs = require("fs");
 
 const ingestRoot = __dirname;
+
+function loadIngestEnv() {
+  const envPath = path.join(ingestRoot, ".env");
+  if (!fs.existsSync(envPath)) return;
+  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq < 1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+
+loadIngestEnv();
 
 const longRunningDefaults = {
   cwd: ingestRoot,
@@ -51,9 +74,17 @@ const regionalApps = [
   },
 ];
 
+const discordApp = {
+  ...longRunningDefaults,
+  name: "discord-bot",
+  args: "run discord:bot",
+  env: { JOBS_SOURCE: "discord-bot" },
+};
+
 module.exports = {
   apps: [
     ...coreApps,
     ...(process.env.ENABLE_REGIONAL_WORKERS === "1" ? regionalApps : []),
+    ...(process.env.DISCORD_ENABLED === "1" ? [discordApp] : []),
   ],
 };

@@ -10,7 +10,8 @@ export type OpsEventSource =
   | "ingest"
   | "api"
   | "job"
-  | "scheduler";
+  | "scheduler"
+  | "discord";
 
 export type OpsEventSeverity = "error" | "warning" | "info";
 

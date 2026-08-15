@@ -67,7 +67,11 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
 async function getJobByDedupeKey(
   dedupeKey: string
 ): Promise<Job<JobPayload> | null> {
-  for (const queueName of [QUEUE_NAMES.REFRESH, QUEUE_NAMES.INGEST]) {
+  for (const queueName of [
+    QUEUE_NAMES.REFRESH,
+    QUEUE_NAMES.INGEST,
+    QUEUE_NAMES.DISCORD,
+  ]) {
     const queue = queueForJobQueue(queueName);
     const job = await queue.getJob(dedupeKey);
     if (job) return job as Job<JobPayload>;

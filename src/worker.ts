@@ -21,6 +21,8 @@ import {
 } from "@aotracker/core/jobs/worker-state";
 import { processBullJob } from "./processor";
 import { runHealthChecks, runIngestPoll } from "./scheduled";
+import { runLiveEventsPoll } from "./discord/live-poll";
+import { runDiscordGuildCatchup } from "./discord/catchup";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 
 /**
@@ -29,6 +31,8 @@ import { recordOpsEvent } from "@aotracker/core/ops/events";
  */
 const INGEST_LOOP_MS = 25 * 60 * 1000;
 const HEALTH_LOOP_MS = 5 * 60 * 1000;
+const LIVE_EVENTS_LOOP_MS = 45 * 1000;
+const DISCORD_CATCHUP_LOOP_MS = 5 * 60 * 1000;
 /** Lock must outlive the slowest ingest poll; default BullMQ lock is only 30s. */
 const SCHEDULER_LOCK_MS = 40 * 60 * 1000;
 const SCHEDULER_LOCK_RENEW_MS = 60 * 1000;
@@ -68,6 +72,8 @@ const source =
 let shuttingDown = false;
 /** Prevent concurrent ingest-poll handlers from overlapping on concurrency > 1. */
 let ingestPollInFlight = false;
+let liveEventsInFlight = false;
+let discordCatchupInFlight = false;
 
 function installSignalHandlers(): void {
   const onSignal = (signal: string) => {
@@ -116,7 +122,13 @@ async function registerRepeatableJobs(): Promise<void> {
   );
   let removed = 0;
   for (const job of leftover) {
-    if (job.name !== "ingest-poll" && job.name !== "health-check") continue;
+    if (
+      job.name !== "ingest-poll" &&
+      job.name !== "health-check" &&
+      job.name !== "live-events-poll" &&
+      job.name !== "discord-guild-catchup"
+    )
+      continue;
     // Keep one-off manual triggers enqueued via the ingest API.
     if (typeof job.id === "string" && job.id.startsWith("manual-")) continue;
     try {
@@ -148,9 +160,23 @@ async function registerRepeatableJobs(): Promise<void> {
       repeat: { every: INGEST_LOOP_MS, immediately: true },
     }
   );
+  await queue.add(
+    "live-events-poll",
+    {},
+    {
+      repeat: { every: LIVE_EVENTS_LOOP_MS, immediately: true },
+    }
+  );
+  await queue.add(
+    "discord-guild-catchup",
+    {},
+    {
+      repeat: { every: DISCORD_CATCHUP_LOOP_MS, immediately: false },
+    }
+  );
 
   console.log(
-    `[worker] Registered scheduler repeats: ingest every ${INGEST_LOOP_MS / 60_000}m, health every ${HEALTH_LOOP_MS / 60_000}m`
+    `[worker] Registered scheduler repeats: ingest every ${INGEST_LOOP_MS / 60_000}m, live events every ${LIVE_EVENTS_LOOP_MS / 1000}s, health every ${HEALTH_LOOP_MS / 60_000}m, discord catch-up every ${DISCORD_CATCHUP_LOOP_MS / 60_000}m`
   );
 }
 
@@ -201,12 +227,34 @@ async function startSchedulerWorker(): Promise<Worker> {
           await recordWorkerRunError("health", message).catch(() => undefined);
           throw err;
         }
+        return;
+      }
+
+      if (job.name === "live-events-poll") {
+        if (liveEventsInFlight) return;
+        liveEventsInFlight = true;
+        try {
+          await runLiveEventsPoll();
+        } finally {
+          liveEventsInFlight = false;
+        }
+        return;
+      }
+
+      if (job.name === "discord-guild-catchup") {
+        if (discordCatchupInFlight) return;
+        discordCatchupInFlight = true;
+        try {
+          await runDiscordGuildCatchup();
+        } finally {
+          discordCatchupInFlight = false;
+        }
       }
     },
     {
       connection: createRedisConnection(),
-      // Ingest poll can run for many minutes; health must not wait on concurrency 1.
-      concurrency: 2,
+      // Ingest poll is long-running; live events, health, and catch-up must still run.
+      concurrency: 4,
       lockDuration: SCHEDULER_LOCK_MS,
       lockRenewTime: SCHEDULER_LOCK_RENEW_MS,
     }
@@ -296,18 +344,20 @@ async function main(): Promise<void> {
     workers.push(await startSchedulerWorker());
   } else if (mode === "process") {
     console.log(
-      `[worker] Starting job processors (ingest + refresh queues)` +
+      `[worker] Starting job processors (ingest + refresh + discord queues)` +
         (preferRegion
           ? ` preferRegion=${preferRegion}${regionOnly ? " regionOnly=true" : ""}`
           : "")
     );
     workers.push(startJobWorker(QUEUE_NAMES.INGEST));
     workers.push(startJobWorker(QUEUE_NAMES.REFRESH));
+    workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
   } else if (mode === "all") {
     console.log("[worker] Starting scheduler + job processors");
     workers.push(await startSchedulerWorker());
     workers.push(startJobWorker(QUEUE_NAMES.INGEST));
     workers.push(startJobWorker(QUEUE_NAMES.REFRESH));
+    workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
   } else {
     console.error(
       `Unknown mode "${mode}". Use: process | scheduler | all [--region=americas|europe|asia] [--region-only]`

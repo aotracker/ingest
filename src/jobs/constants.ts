@@ -15,6 +15,7 @@ export const JOB_TIMEOUT_MS: Record<string, number> = {
   "entity-resolve": 30_000,
   "live-search": 90_000,
   "ingest-event": 120_000,
+  "notify-discord": 90_000,
 };
 
 export class JobTimeoutError extends Error {

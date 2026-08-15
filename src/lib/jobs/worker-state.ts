@@ -229,3 +229,72 @@ export async function getWorkerJobStatuses(): Promise<{
 
 /** @deprecated Use getWorkerJobStatuses */
 export const getCronJobStatuses = getWorkerJobStatuses;
+
+export const DISCORD_BOT_JOB_KEY = "discord-bot";
+export const DISCORD_BOT_ALIVE_MS = 90_000;
+
+const DISCORD_BOT_DEFINITION = {
+  jobKey: DISCORD_BOT_JOB_KEY,
+  label: "Discord bot",
+  path: "discord:bot",
+  schedule: "Continuous (gateway)",
+};
+
+async function ensureDiscordBotRow() {
+  const existing = await db.query.cronJobState.findFirst({
+    where: eq(schema.cronJobState.jobKey, DISCORD_BOT_JOB_KEY),
+  });
+  if (existing) return existing;
+
+  const [inserted] = await db
+    .insert(schema.cronJobState)
+    .values(DISCORD_BOT_DEFINITION)
+    .returning();
+  return inserted;
+}
+
+export async function recordDiscordBotHeartbeat(
+  result?: Record<string, unknown>
+): Promise<void> {
+  await ensureDiscordBotRow();
+  const now = new Date();
+
+  await db
+    .update(schema.cronJobState)
+    .set({
+      lastRunAt: now,
+      lastSuccessAt: now,
+      lastStatus: "success",
+      lastResult: result ?? null,
+      lastErrorMessage: null,
+      updatedAt: now,
+    })
+    .where(eq(schema.cronJobState.jobKey, DISCORD_BOT_JOB_KEY));
+}
+
+export async function recordDiscordBotError(
+  errorMessage: string
+): Promise<void> {
+  await ensureDiscordBotRow();
+  const now = new Date();
+
+  await db
+    .update(schema.cronJobState)
+    .set({
+      lastRunAt: now,
+      lastErrorAt: now,
+      lastErrorMessage: errorMessage,
+      lastStatus: "error",
+      updatedAt: now,
+    })
+    .where(eq(schema.cronJobState.jobKey, DISCORD_BOT_JOB_KEY));
+
+  const { recordOpsEvent } = await import("../ops/events");
+  await recordOpsEvent({
+    source: "discord",
+    severity: "error",
+    category: "bot",
+    message: errorMessage,
+    details: { jobKey: DISCORD_BOT_JOB_KEY },
+  });
+}

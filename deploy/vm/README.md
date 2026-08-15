@@ -25,7 +25,8 @@ PM2 runs the ingest HTTP API and BullMQ workers as separate managed processes vi
 | PM2 app | Command | Purpose |
 |---------|---------|---------|
 | `ingest-api` | `npm run api` | HTTP API on `INGEST_API_PORT` (default `3001`) — queue status, job triggers for Vercel |
-| `ingest-worker` | `npm run worker` | BullMQ scheduler (25m ingest poll, 5m health) + processors for `ingest` and `refresh` queues |
+| `ingest-worker` | `npm run worker` | BullMQ scheduler (25m ingest poll, ~45s live events, 5m health) + processors for `ingest`, `refresh`, and `discord` queues |
+| `discord-bot` | `npm run discord:bot` | Discord gateway + slash commands. **Only started when `DISCORD_ENABLED=1`** |
 | `battle-evict` | `npm run db:evict-battle-details` | Weekly battle JSON eviction (Sun 05:30 UTC) |
 
 ### First-time setup
@@ -58,6 +59,26 @@ npx pm2 save
 ```
 
 This starts `ingest-worker-americas` and `ingest-worker-europe` (processors only, with `JOBS_REGION` set).
+
+### Discord bot kill switch
+
+The bot is off unless `DISCORD_ENABLED=1` in `/home/ubuntu/ingest/.env`.
+
+```bash
+# Immediate — disconnect gateway; ingest keeps running
+pm2 stop discord-bot
+
+# Durable — do not start bot, do not enqueue Discord posts, skip guild catch-up
+# Set DISCORD_ENABLED=0 in .env, then:
+cd /home/ubuntu/ingest
+pm2 reload ecosystem.config.cjs
+
+# Re-enable
+# Set DISCORD_ENABLED=1 in .env, then:
+pm2 reload ecosystem.config.cjs
+```
+
+Feeds stay in Postgres. Do not delete the Discord application. See [DEPLOY.md](../../../DEPLOY.md).
 
 ### Migrating from systemd
 
@@ -106,6 +127,8 @@ Or run individual scripts:
 | `npm run db:apply-ops-events` | `ops_events` table |
 | `npm run db:apply-api-request-log-details` | `api_request_logs.details` column |
 | `npm run db:apply-battles-and-participants-idx` | Battles feed + player-analytics indexes |
+| `npm run db:apply-guild-hour-stats` | Guild UTC-hour activity tables |
+| `npm run db:apply-discord-bot` | Discord servers, feeds, and post-log tables |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
 
