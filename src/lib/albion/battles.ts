@@ -408,7 +408,8 @@ export const loadBattle = cache(resolveBattle);
 
 export async function getAllBattleEvents(
   region: AlbionRegion,
-  battleId: number
+  battleId: number,
+  options?: { signal?: AbortSignal }
 ): Promise<AlbionEvent[]> {
   if (!isRegionEnabled(region)) return [];
   const { getAlbionClient } = await import("./client");
@@ -420,12 +421,13 @@ export async function getAllBattleEvents(
     offset < BATTLE_EVENTS_MAX;
     offset += BATTLE_EVENTS_PAGE_SIZE
   ) {
+    if (options?.signal?.aborted) break;
     let batch: AlbionEvent[];
     try {
       batch = await client.getBattleEvents(region, battleId, {
         offset,
         limit: BATTLE_EVENTS_PAGE_SIZE,
-        requestOptions: { maxRetries: 1 },
+        requestOptions: { maxRetries: 1, signal: options?.signal },
       });
     } catch (err) {
       const { isCircuitOpenError } = await import("../db/api-state");
@@ -563,7 +565,8 @@ export const loadBattleDetailData = cache(async function loadBattleDetailData(
 /** Fetch and cache full battle detail (worker-safe; no React request cache). */
 export async function syncBattleDetailData(
   region: AlbionRegion,
-  battleId: number
+  battleId: number,
+  options?: { signal?: AbortSignal }
 ): Promise<BattleDetailData | null> {
   const { getCachedBattleDetail, cacheBattleDetail } = await import(
     "../db/battle-cache"
@@ -577,7 +580,7 @@ export async function syncBattleDetailData(
 
   let events: AlbionEvent[] = [];
   try {
-    events = await getAllBattleEvents(region, battleId);
+    events = await getAllBattleEvents(region, battleId, options);
   } catch {
     // Degrade gracefully: battle stats still render without gear enrichment.
   }

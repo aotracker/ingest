@@ -20,7 +20,8 @@ import {
 
 export async function executeJob(
   name: string,
-  payload: JobPayload
+  payload: JobPayload,
+  options?: { signal?: AbortSignal }
 ): Promise<unknown> {
   switch (name) {
     case "ingest-event": {
@@ -103,7 +104,11 @@ export async function executeJob(
         );
         return;
       }
-      const result = await syncBattleDetailData(payload.region, payload.battleId);
+      const result = await syncBattleDetailData(
+        payload.region,
+        payload.battleId,
+        { signal: options?.signal }
+      );
       if (!result) {
         throw new BattleNotReadyError(payload.region, payload.battleId);
       }

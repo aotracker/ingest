@@ -15,15 +15,20 @@ import {
   isJobTimeoutError,
   JobTimeoutError,
   jobTimeoutMs,
+  MAX_SYNC_BATTLE_PER_BATCH,
+  SYNC_BATTLE_OVERFLOW_DELAY_MS,
 } from "./jobs/constants";
 import type { JobPayload } from "./jobs/types";
 import { executeJob } from "./handlers";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 
+let syncBattleInFlight = 0;
+
 async function withTimeout<T>(
   work: Promise<T>,
   timeoutMs: number,
-  jobName: string
+  jobName: string,
+  abort?: AbortController
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -31,12 +36,14 @@ async function withTimeout<T>(
       work,
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
+          abort?.abort();
           reject(new JobTimeoutError(jobName, timeoutMs));
         }, timeoutMs);
       }),
     ]);
   } catch (err) {
     if (isJobTimeoutError(err)) {
+      abort?.abort();
       void work.catch(() => undefined);
     }
     throw err;
@@ -158,9 +165,23 @@ export async function processBullJob(
     throw new DelayedError();
   }
 
+  if (job.name === "sync-battle") {
+    if (syncBattleInFlight >= MAX_SYNC_BATTLE_PER_BATCH) {
+      await job.moveToDelayed(Date.now() + SYNC_BATTLE_OVERFLOW_DELAY_MS);
+      throw new DelayedError();
+    }
+    syncBattleInFlight += 1;
+  }
+
   const timeoutMs = jobTimeoutMs(job.name);
+  const abort = new AbortController();
   try {
-    return await withTimeout(executeJob(job.name, payload), timeoutMs, job.name);
+    return await withTimeout(
+      executeJob(job.name, payload, { signal: abort.signal }),
+      timeoutMs,
+      job.name,
+      abort
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
@@ -191,5 +212,9 @@ export async function processBullJob(
       console.error(`[jobs] ${job.name} failed:`, message);
     }
     throw err;
+  } finally {
+    if (job.name === "sync-battle") {
+      syncBattleInFlight = Math.max(0, syncBattleInFlight - 1);
+    }
   }
 }

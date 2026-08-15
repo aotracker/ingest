@@ -1,6 +1,3 @@
-export const CIRCUIT_JOB_DEFER_MS = 60_000;
-export const CIRCUIT_MAX_JOB_DEFERS = 10;
-
 /** Per-job wall-clock cap so one hung sync cannot freeze the worker loop. */
 export const DEFAULT_JOB_TIMEOUT_MS = 120_000;
 export const JOB_TIMEOUT_MS: Record<string, number> = {
@@ -64,8 +61,9 @@ export function battleNotReadyDelayMs(notReadyDefers: number): number {
   return BATTLE_NOT_READY_DELAYS_MS[index];
 }
 
-/** Cap sync-battle jobs claimed per batch so large ZvZs cannot starve everything else. */
-export const MAX_SYNC_BATTLE_PER_BATCH = 3;
+/** Cap in-flight sync-battle jobs per worker so large ZvZs cannot starve everything else. */
+export const MAX_SYNC_BATTLE_PER_BATCH = 2;
+export const SYNC_BATTLE_OVERFLOW_DELAY_MS = 2_000;
 
 /**
  * User promote will not shorten backoffs longer than this (circuit / Albion-not-ready).

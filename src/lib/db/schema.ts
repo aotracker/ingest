@@ -60,6 +60,7 @@ export const guilds = pgTable(
   (t) => [
     uniqueIndex("guilds_albion_region_idx").on(t.albionId, t.region),
     index("guilds_name_idx").on(t.name),
+    index("guilds_alliance_idx").on(t.region, t.allianceId),
   ]
 );
 
@@ -119,6 +120,7 @@ export const players = pgTable(
     uniqueIndex("players_albion_region_idx").on(t.albionId, t.region),
     index("players_name_idx").on(t.name),
     index("players_guild_idx").on(t.guildId),
+    index("players_alliance_idx").on(t.allianceId),
   ]
 );
 
@@ -153,6 +155,9 @@ export const battles = pgTable(
     uniqueIndex("battles_albion_region_idx").on(t.albionBattleId, t.region),
     index("battles_detail_evict_idx").on(t.endTime, t.detailEvictedAt),
     index("battles_region_start_time_idx").on(t.region, t.startTime),
+    index("battles_detail_sync_unavailable_idx")
+      .on(t.detailSyncUnavailable)
+      .where(sql`${t.detailSyncUnavailable} = 1`),
   ]
 );
 
@@ -185,6 +190,10 @@ export const killEvents = pgTable(
     index("kill_events_region_occurred_fame_idx")
       .on(t.region, t.occurredAt)
       .where(sql`${t.totalVictimKillFame} > 0`),
+    index("kill_events_battle_id_idx").on(t.battleId),
+    index("kill_events_region_albion_battle_idx")
+      .on(t.region, t.albionBattleId)
+      .where(sql`${t.albionBattleId} is not null`),
   ]
 );
 
@@ -317,6 +326,7 @@ export const apiSyncState = pgTable(
   }
 );
 
+/** @deprecated Unused since BullMQ; drop after confirming the table is empty. */
 export const backgroundJobs = pgTable(
   "background_jobs",
   {

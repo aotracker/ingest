@@ -65,6 +65,44 @@ export async function findMatchingFeeds(input: {
     );
 }
 
+export async function findMatchingFeedsForKill(input: {
+  region: AlbionRegion;
+  killerGuildId: string | null;
+  victimGuildId: string | null;
+  includeKills: boolean;
+}): Promise<DiscordFeedRow[]> {
+  const typeMatches = [];
+  if (input.includeKills && input.killerGuildId) {
+    typeMatches.push(
+      and(
+        eq(schema.discordFeeds.feedType, FEED_GUILD_KILLS),
+        eq(schema.discordFeeds.targetAlbionId, input.killerGuildId)
+      )
+    );
+  }
+  if (input.victimGuildId) {
+    typeMatches.push(
+      and(
+        eq(schema.discordFeeds.feedType, FEED_GUILD_DEATHS),
+        eq(schema.discordFeeds.targetAlbionId, input.victimGuildId)
+      )
+    );
+  }
+  if (typeMatches.length === 0) return [];
+
+  return db
+    .select()
+    .from(schema.discordFeeds)
+    .where(
+      and(
+        eq(schema.discordFeeds.targetType, "guild"),
+        eq(schema.discordFeeds.region, input.region),
+        eq(schema.discordFeeds.enabled, 1),
+        or(...typeMatches)
+      )
+    );
+}
+
 export async function listActiveGuildFeedTargets(): Promise<
   { region: AlbionRegion; targetAlbionId: string }[]
 > {
@@ -119,17 +157,7 @@ export async function searchGuildsForAutocomplete(
   return rows;
 }
 
-export async function getGuildByAlbionId(
-  region: AlbionRegion,
-  albionId: string
-) {
-  return db.query.guilds.findFirst({
-    where: and(
-      eq(schema.guilds.region, region),
-      eq(schema.guilds.albionId, albionId)
-    ),
-  });
-}
+export { getGuildByAlbionId } from "@aotracker/core/db/queries-ingest";
 
 export async function getGuildByName(region: AlbionRegion, name: string) {
   return db.query.guilds.findFirst({

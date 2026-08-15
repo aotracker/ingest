@@ -4,6 +4,7 @@ import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { db, schema } from "@aotracker/core/db";
 import { getBattleByAlbionId } from "@aotracker/core/db/battle-cache";
 import { BATTLE_API_DELAY_NOTICE_MS } from "./constants";
+import { isNotReadyJobError } from "./errors";
 import {
   entityResolveDedupeKey,
   type EntityResolveType,
@@ -19,8 +20,16 @@ import { toLegacyJobState, type JobPayload } from "./types";
 
 /** Successfully completed jobs older than this are omitted from the status UI. */
 const COMPLETED_VISIBLE_MS = 3 * 60 * 60 * 1000;
-const QUEUE_STATUS_MAX_ROWS = 5_000;
+/** Per-state list cap — counts still come from getJobCounts. */
+const QUEUE_STATUS_LIST_LIMIT = 100;
 const API_REQUEST_LOG_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const QUEUE_LIST_STATES = [
+  "active",
+  "waiting",
+  "delayed",
+  "failed",
+  "completed",
+] as const;
 
 export interface BattleSyncJobInfo {
   state: string | null;
@@ -35,18 +44,6 @@ export interface BattleSyncJobInfo {
   showApiDelayNotice: boolean;
   detailUnavailable: boolean;
   detailUnavailableError: string | null;
-}
-
-function isNotReadyJobError(error: string | null | undefined): boolean {
-  if (!error) return false;
-  return (
-    error.includes("Battle detail not ready") ||
-    error.includes("Battle detail unavailable") ||
-    error.includes("still has not published this battle") ||
-    error.includes("below sync threshold") ||
-    error.includes("circuit defers") ||
-    /\bHTTP 404\b/.test(error)
-  );
 }
 
 function battleSyncDedupeKey(region: string, battleId: number): string {
@@ -223,14 +220,49 @@ async function purgeOldOpsEvents(): Promise<void> {
   await purge();
 }
 
-async function getMergedQueueSnapshot(): Promise<QueueStatusSnapshot> {
+/** Retention cleanup — call from the health-check scheduler, not the admin poll. */
+export async function purgeExpiredOpsData(): Promise<void> {
   await purgeOldApiRequestLogs().catch((err) => {
     console.warn("[jobs] api-request-log purge skipped:", err);
   });
   await purgeOldOpsEvents().catch((err) => {
     console.warn("[jobs] ops-events purge skipped:", err);
   });
+}
 
+function summarizeJob(
+  job: Job<JobPayload>,
+  queueName: string,
+  state: (typeof QUEUE_LIST_STATES)[number]
+): QueueJobSummary | null {
+  const delayedUntil =
+    typeof job.timestamp === "number" && typeof job.delay === "number"
+      ? job.timestamp + job.delay
+      : null;
+  const legacy = legacyStateFromBullJob(state, delayedUntil);
+  if (!legacy) return null;
+
+  return {
+    id: job.id ?? job.name,
+    name: job.name,
+    queue: queueName,
+    state: legacy,
+    dbStatus: mapDbStatus(state),
+    data: summarizePayload(job.data),
+    timestamp: job.timestamp ?? null,
+    processedOn: job.processedOn ?? null,
+    completedOn: job.finishedOn ?? null,
+    runAt: delayedUntil ?? job.processedOn ?? job.timestamp ?? null,
+    failedReason:
+      typeof job.failedReason === "string" ? job.failedReason : null,
+    delay:
+      state === "delayed" && delayedUntil != null && delayedUntil > Date.now()
+        ? delayedUntil - Date.now()
+        : null,
+  };
+}
+
+async function getMergedQueueSnapshot(): Promise<QueueStatusSnapshot> {
   const counts = {
     waiting: 0,
     active: 0,
@@ -256,43 +288,15 @@ async function getMergedQueueSnapshot(): Promise<QueueStatusSnapshot> {
     counts.failed += queueCounts.failed ?? 0;
     counts.completed += queueCounts.completed ?? 0;
 
-    const rows = await queue.getJobs(
-      ["waiting", "active", "delayed", "failed", "completed"],
-      0,
-      QUEUE_STATUS_MAX_ROWS
-    );
-
-    for (const job of rows) {
-      const state = await job.getState();
-      if (state === "completed" && job.finishedOn != null) {
-        if (job.finishedOn < completedAfter) continue;
+    for (const state of QUEUE_LIST_STATES) {
+      const rows = await queue.getJobs([state], 0, QUEUE_STATUS_LIST_LIMIT - 1);
+      for (const job of rows) {
+        if (state === "completed" && job.finishedOn != null) {
+          if (job.finishedOn < completedAfter) continue;
+        }
+        const summary = summarizeJob(job as Job<JobPayload>, queueName, state);
+        if (summary) jobs.push(summary);
       }
-
-      const delayedUntil =
-        typeof job.timestamp === "number" && typeof job.delay === "number"
-          ? job.timestamp + job.delay
-          : null;
-      const legacy = legacyStateFromBullJob(state, delayedUntil);
-      if (!legacy) continue;
-
-      jobs.push({
-        id: job.id ?? job.name,
-        name: job.name,
-        queue: queueName,
-        state: legacy,
-        dbStatus: mapDbStatus(state),
-        data: summarizePayload(job.data),
-        timestamp: job.timestamp ?? null,
-        processedOn: job.processedOn ?? null,
-        completedOn: job.finishedOn ?? null,
-        runAt: delayedUntil ?? job.processedOn ?? job.timestamp ?? null,
-        failedReason:
-          typeof job.failedReason === "string" ? job.failedReason : null,
-        delay:
-          state === "delayed" && delayedUntil != null && delayedUntil > Date.now()
-            ? delayedUntil - Date.now()
-            : null,
-      });
     }
   }
 

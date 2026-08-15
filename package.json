@@ -28,10 +28,14 @@
     "db:apply-battles-and-participants-idx": "tsx --env-file=.env scripts/db/apply-battles-and-participants-idx.ts",
     "db:apply-guild-hour-stats": "tsx --env-file=.env scripts/db/apply-guild-hour-stats.ts",
     "db:apply-discord-bot": "tsx --env-file=.env scripts/db/apply-discord-bot.ts",
+    "db:apply-kill-events-battle-idx": "tsx --env-file=.env scripts/db/apply-kill-events-battle-idx.ts",
     "db:prove-guild-hour-activity": "tsx --env-file=.env scripts/db/prove-guild-hour-activity.ts",
-    "db:apply-pending": "npm run db:apply-api-sync-health && npm run db:apply-alliance-battles && npm run db:apply-kill-fame-idx && npm run db:apply-battle-detail-unavailable && npm run db:apply-battle-detail-eviction && npm run db:apply-ops-events && npm run db:apply-api-request-log-details && npm run db:apply-battles-and-participants-idx && npm run db:apply-guild-hour-stats && npm run db:apply-discord-bot",
+    "db:apply-pending": "npm run db:apply-api-sync-health && npm run db:apply-alliance-battles && npm run db:apply-kill-fame-idx && npm run db:apply-battle-detail-unavailable && npm run db:apply-battle-detail-eviction && npm run db:apply-ops-events && npm run db:apply-api-request-log-details && npm run db:apply-battles-and-participants-idx && npm run db:apply-guild-hour-stats && npm run db:apply-discord-bot && npm run db:apply-kill-events-battle-idx",
     "discord:bot": "tsx --env-file=.env src/discord/start.ts",
     "discord:notify-once": "tsx --env-file=.env scripts/discord-notify-once.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:drift": "node scripts/check-lib-drift.mjs",
     "api": "tsx --env-file=.env src/server.ts",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop ecosystem.config.cjs",
@@ -47,17 +51,21 @@
     "@aws-sdk/client-s3": "^3.1111.0",
     "bullmq": "^5.34.0",
     "discord.js": "^14.27.0",
-    "drizzle-orm": "^0.38.3",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.2",
     "ioredis": "^5.4.2",
-    "postgres": "^3.4.5",
+    "postgres": "^3.4.7",
     "sharp": "^0.35.3"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.17.0",
     "pm2": "^5.4.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -24,6 +24,9 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 | `npm run jobs:ingest` | One-off ingest poll |
 | `npm run jobs:health` | One-off API health check |
 | `npm run db:evict-battle-details` | Weekly battle JSON eviction |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run test` | Vitest unit tests |
+| `npm run check:drift` | Diff watched `src/lib` copies against sibling `client/` |
 
 ## Setup on the VM
 
@@ -47,3 +50,19 @@ Production: use PM2 (`ingest-api`, `ingest-scheduler`, `ingest-worker`) — see 
 | Runs ingest poll / health loops | No | Yes |
 
 `client/` talks to Postgres directly and calls the ingest HTTP API for jobs. BullMQ job code lives in `ingest/src/jobs/`. DB and Albion API helpers live in `ingest/src/lib/` (a local copy, independent of `client/`).
+
+**Ingest is the source of truth for write-path DB helpers.** Client owns read queries and `client/drizzle/` migrations. Production schema: `npm run db:apply-pending` from this package (scripts in `scripts/db/`).
+
+## Performance
+
+| Setting | Value |
+|---------|--------|
+| Main ingest poll | every 25 minutes |
+| Live events poll | every 45 seconds (same batch caches as main poll) |
+| Albion rate limit | 1 request/second per region |
+| `DATABASE_POOL_MAX` | 3 per PM2 app (override in `.env`) |
+| `INGEST_DEBUG=1` | verbose per-10-event ingest progress logs |
+
+See [OPTIMIZATION.md](../OPTIMIZATION.md).
+
+Discord: a single `discord-bot` PM2 app owns in-memory per-channel send gaps. Do not run regional bot replicas — they would double-post.

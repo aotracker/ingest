@@ -71,7 +71,11 @@ function longRunning(name, scriptArgs, extra = {}) {
     out_file: path.join(resolvedLogDir, `${name}-out.log`),
     error_file: path.join(resolvedLogDir, `${name}-error.log`),
     vizion: false,
-    env: { NODE_ENV: "production", ...extraEnv },
+    env: {
+      NODE_ENV: "production",
+      DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "3",
+      ...extraEnv,
+    },
     ...rest,
   };
 }

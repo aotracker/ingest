@@ -14,6 +14,7 @@ import {
   ensureSyncStates,
   type IngestBattleStats,
 } from "./ingest";
+import { purgeExpiredOpsData } from "./jobs/status";
 
 async function ingestPollRegion(region: AlbionRegion): Promise<void> {
   // Recent battles first — list stats seed event ingest so it can skip /battles/{id}.
@@ -48,6 +49,7 @@ export async function runIngestPoll(): Promise<void> {
 }
 
 export async function runHealthChecks(): Promise<void> {
+  await purgeExpiredOpsData();
   const client = getAlbionClient();
 
   for (const region of ENABLED_REGIONS) {

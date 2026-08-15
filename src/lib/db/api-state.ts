@@ -5,12 +5,62 @@ import type { AlbionRegion } from "../albion/types";
 /** How long the circuit stays open before a probe request is allowed. */
 export const CIRCUIT_RESET_MS = 60_000;
 /** Final failed requests (after retries) required to open the circuit. */
-/** Final failed requests (after retries) required to open the circuit. */
 export const CIRCUIT_FAILURE_THRESHOLD = 5;
 /** Default job re-queue delay when a worker hits an open circuit. */
 export const CIRCUIT_JOB_DEFER_MS = 30_000;
 /** Soft circuit defers before a job is marked failed instead of looping forever. */
 export const CIRCUIT_MAX_JOB_DEFERS = 10;
+
+const SUCCESS_LOG_SAMPLE_RATE = 20;
+const SUCCESS_LOG_FLUSH_MS = 5_000;
+const SUCCESS_LOG_FLUSH_SIZE = 25;
+
+type PendingSuccessLog = {
+  region: AlbionRegion;
+  endpoint: string;
+  latencyMs: number;
+};
+
+let successLogCounter = 0;
+let pendingSuccessLogs: PendingSuccessLog[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function flushSuccessLogs(): Promise<void> {
+  const batch = pendingSuccessLogs;
+  pendingSuccessLogs = [];
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = undefined;
+  }
+  if (batch.length === 0) return;
+  await db.insert(schema.apiRequestLogs).values(
+    batch.map((row) => ({
+      region: row.region,
+      endpoint: row.endpoint,
+      latencyMs: row.latencyMs,
+      status: "success" as const,
+    }))
+  );
+}
+
+function scheduleSuccessLog(row: PendingSuccessLog): void {
+  successLogCounter += 1;
+  if (successLogCounter % SUCCESS_LOG_SAMPLE_RATE !== 0) return;
+  pendingSuccessLogs.push(row);
+  if (pendingSuccessLogs.length >= SUCCESS_LOG_FLUSH_SIZE) {
+    void flushSuccessLogs().catch((err) => {
+      console.warn("[api-state] success log flush failed:", err);
+    });
+    return;
+  }
+  if (!flushTimer) {
+    flushTimer = setTimeout(() => {
+      void flushSuccessLogs().catch((err) => {
+        console.warn("[api-state] success log flush failed:", err);
+      });
+    }, SUCCESS_LOG_FLUSH_MS);
+  }
+}
 
 export class CircuitOpenError extends Error {
   readonly region: AlbionRegion;
@@ -162,12 +212,7 @@ export async function recordApiSuccess(
     })
     .where(eq(schema.apiSyncState.region, region));
 
-  await db.insert(schema.apiRequestLogs).values({
-    region,
-    endpoint,
-    latencyMs,
-    status: "success",
-  });
+  scheduleSuccessLog({ region, endpoint, latencyMs });
 }
 
 /** Log a soft miss (e.g. 404 not published yet) without opening the region circuit. */
@@ -227,16 +272,6 @@ export async function recordApiFailure(
       category: "circuit",
       region,
       message: `Circuit opened after ${failures} failures: ${errorMessage}`,
-      details: { endpoint, errorType, failures, ...(details ?? {}) },
-    });
-  } else {
-    const { recordOpsEvent } = await import("../ops/events");
-    await recordOpsEvent({
-      source: "api",
-      severity: "error",
-      category: "api_failure",
-      region,
-      message: errorMessage,
       details: { endpoint, errorType, failures, ...(details ?? {}) },
     });
   }

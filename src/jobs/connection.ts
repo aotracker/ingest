@@ -1,7 +1,7 @@
-import IORedis from "ioredis";
+import Redis, { type RedisOptions } from "ioredis";
 
 const globalForRedis = globalThis as unknown as {
-  redis: IORedis | undefined;
+  redis: Redis | undefined;
 };
 
 /** Consecutive READONLY errors before the process exits (PM2 restarts). */
@@ -49,10 +49,10 @@ export function noteRedisReadonlyFailure(source: string): void {
   }
 }
 
-const REDIS_CLIENT_OPTIONS: IORedis.RedisOptions = {
+const REDIS_CLIENT_OPTIONS: RedisOptions = {
   maxRetriesPerRequest: null,
   enableReadyCheck: true,
-  reconnectOnError(err) {
+  reconnectOnError(err: Error) {
     if (isRedisReadonlyError(err)) {
       noteRedisReadonlyFailure("reconnectOnError");
       return true;
@@ -68,7 +68,7 @@ export type RedisWritableStatus = {
 };
 
 export async function checkRedisWritable(
-  redis?: IORedis
+  redis?: Redis
 ): Promise<RedisWritableStatus> {
   const start = Date.now();
   const client = redis ?? getRedisConnection();
@@ -88,7 +88,7 @@ export async function checkRedisWritable(
 }
 
 export async function assertRedisWritable(): Promise<void> {
-  const redis = new IORedis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
+  const redis = new Redis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
   const key = `ingest:write-check:${Date.now()}`;
   try {
     await redis.set(key, "1", "EX", 30);
@@ -136,13 +136,13 @@ export function startRedisHealthMonitor(): () => void {
   };
 }
 
-export function getRedisConnection(): IORedis {
+export function getRedisConnection(): Redis {
   if (!globalForRedis.redis) {
-    globalForRedis.redis = new IORedis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
+    globalForRedis.redis = new Redis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
   }
   return globalForRedis.redis;
 }
 
-export function createRedisConnection(): IORedis {
-  return new IORedis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
+export function createRedisConnection(): Redis {
+  return new Redis(resolveRedisUrl(), REDIS_CLIENT_OPTIONS);
 }

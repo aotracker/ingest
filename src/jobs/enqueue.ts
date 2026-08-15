@@ -18,6 +18,7 @@ import {
   MAX_USER_PROMOTE_REMAINING_MS,
   WARM_SYNC_DELAY_MS,
 } from "./constants";
+import { isNotReadyJobError } from "./errors";
 import { getSchedulerQueue, queueForJobQueue } from "./queues";
 import {
   QUEUE_NAMES,
@@ -358,18 +359,6 @@ async function battleAlreadyHasDetail(
     },
   });
   return row?.totalFame != null && row.detailPayload != null;
-}
-
-function isNotReadyJobError(error: string | null | undefined): boolean {
-  if (!error) return false;
-  return (
-    error.includes("Battle detail not ready") ||
-    error.includes("Battle detail unavailable") ||
-    error.includes("still has not published this battle") ||
-    error.includes("below sync threshold") ||
-    error.includes("circuit defers") ||
-    /\bHTTP 404\b/.test(error)
-  );
 }
 
 export async function ensureBattleDetailQueued(

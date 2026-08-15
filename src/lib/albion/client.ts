@@ -59,7 +59,12 @@ export class AlbionApiClient {
   async request<T>(
     region: AlbionRegion,
     path: string,
-    options?: { timeout?: number; skipRateLimit?: boolean; maxRetries?: number }
+    options?: {
+      timeout?: number;
+      skipRateLimit?: boolean;
+      maxRetries?: number;
+      signal?: AbortSignal;
+    }
   ): Promise<T> {
     await ensureCircuitAllows(region);
 
@@ -87,6 +92,9 @@ export class AlbionApiClient {
       try {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout);
+        const onOuterAbort = () => controller.abort();
+        options?.signal?.addEventListener("abort", onOuterAbort, { once: true });
+        if (options?.signal?.aborted) controller.abort();
 
         const response = await fetch(url, {
           signal: controller.signal,
@@ -95,6 +103,7 @@ export class AlbionApiClient {
         });
 
         clearTimeout(timer);
+        options?.signal?.removeEventListener("abort", onOuterAbort);
         const latencyMs = Date.now() - start;
         errorContext.latencyMs = latencyMs;
 
@@ -239,7 +248,7 @@ export class AlbionApiClient {
     options?: {
       offset?: number;
       limit?: number;
-      requestOptions?: { timeout?: number; maxRetries?: number };
+      requestOptions?: { timeout?: number; maxRetries?: number; signal?: AbortSignal };
     }
   ): Promise<AlbionEvent[]> {
     const offset = options?.offset ?? 0;

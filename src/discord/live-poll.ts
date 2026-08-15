@@ -7,31 +7,18 @@ import {
   CircuitOpenError,
   isCircuitOpenError,
 } from "@aotracker/core/db/api-state";
-import { ingestEvent } from "../ingest";
+import { ingestRegionEventBatch } from "../ingest";
 
 export async function ingestLiveRegionEvents(
   region: AlbionRegion
 ): Promise<number> {
   const client = getAlbionClient();
   const events = await client.getRecentEvents(region, 50, 0);
-  let ingested = 0;
-
-  for (const event of events) {
-    try {
-      const isNew = await ingestEvent(region, event, {
-        fetchBattleDetail: false,
-        notifyDiscord: true,
-      });
-      if (isNew) ingested += 1;
-    } catch (err) {
-      if (isCircuitOpenError(err) || err instanceof CircuitOpenError) throw err;
-      console.error(
-        `[live-events] ${region} event ${event.EventId} failed:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
+  const { ingested } = await ingestRegionEventBatch(region, events, {
+    fetchBattleDetail: false,
+    notifyDiscord: true,
+    logPrefix: "live-events",
+  });
   return ingested;
 }
 

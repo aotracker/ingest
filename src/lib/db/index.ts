@@ -13,7 +13,7 @@ function resolvePoolMax(): number {
     const parsed = parseInt(configured, 10);
     if (!Number.isNaN(parsed) && parsed > 0) return parsed;
   }
-  return process.env.VERCEL === "1" ? 1 : 10;
+  return process.env.VERCEL === "1" ? 1 : 3;
 }
 
 const globalForDb = globalThis as unknown as {

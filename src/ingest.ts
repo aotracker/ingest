@@ -51,8 +51,14 @@ import {
   isSyncStale,
   profileFieldsChanged,
 } from "@aotracker/core/db/sync";
+import {
+  CircuitOpenError,
+  isCircuitOpenError,
+} from "@aotracker/core/db/api-state";
 import { toBigInt } from "@aotracker/core/utils";
 import { ensureBattleDetailQueued } from "./jobs/enqueue";
+
+const DEFAULT_EVENT_BATCH_CONCURRENCY = 3;
 
 export type IngestEntityCache = {
   guilds: Map<string, Promise<string | null>>;
@@ -1059,6 +1065,113 @@ export async function ingestEvent(
   return isNew;
 }
 
+export type IngestRegionEventBatchOptions = {
+  fetchBattleDetail?: boolean;
+  notifyDiscord?: boolean;
+  battleDetailCache?: Map<number, IngestBattleStats>;
+  entityCache?: IngestEntityCache;
+  concurrency?: number;
+  logPrefix?: string;
+};
+
+export type IngestRegionEventBatchResult = {
+  ingested: number;
+  skipped: number;
+  errors: number;
+  lastError: string | null;
+};
+
+async function mapPool<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  const limit = Math.max(1, concurrency);
+  let next = 0;
+  async function run(): Promise<void> {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      await worker(items[index]!, index);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => run())
+  );
+}
+
+/** Shared live-poll / main-poll / history path: batch-load existing events, reuse caches. */
+export async function ingestRegionEventBatch(
+  region: AlbionRegion,
+  events: AlbionEvent[],
+  options?: IngestRegionEventBatchOptions
+): Promise<IngestRegionEventBatchResult> {
+  const battleDetailCache =
+    options?.battleDetailCache ?? new Map<number, IngestBattleStats>();
+  const entityCache = options?.entityCache ?? createIngestEntityCache();
+  const existingByEventId = await loadExistingKillEvents(
+    region,
+    events.map((event) => event.EventId)
+  );
+  const concurrency = options?.concurrency ?? DEFAULT_EVENT_BATCH_CONCURRENCY;
+  const logPrefix = options?.logPrefix ?? "ingest";
+  const notifyDiscord = options?.notifyDiscord === true;
+  const fetchBattleDetail = options?.fetchBattleDetail;
+  const debug = process.env.INGEST_DEBUG === "1";
+
+  let ingested = 0;
+  let skipped = 0;
+  let errors = 0;
+  let lastError: string | null = null;
+  const startedAt = Date.now();
+  let done = 0;
+  const total = events.length;
+
+  if (debug) {
+    console.log(`[${logPrefix}] ${region} events: processing ${total}`);
+  }
+
+  await mapPool(events, concurrency, async (event) => {
+    if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
+      skipped += 1;
+    } else {
+      try {
+        const isNew = await ingestEvent(region, event, {
+          fetchBattleDetail,
+          battleDetailCache,
+          entityCache,
+          existingByEventId,
+          notifyDiscord,
+        });
+        if (isNew) ingested += 1;
+        else skipped += 1;
+      } catch (err) {
+        if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
+          throw err;
+        }
+        errors += 1;
+        lastError = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[${logPrefix}] Failed event ${event.EventId} in ${region}:`,
+          lastError
+        );
+      }
+    }
+
+    done += 1;
+    if (debug && (done === total || done % 10 === 0)) {
+      console.log(
+        `[${logPrefix}] ${region} events: ${done}/${total} ` +
+          `(new=${ingested} skipped=${skipped} errors=${errors} ` +
+          `${Math.round((Date.now() - startedAt) / 1000)}s)`
+      );
+    }
+  });
+
+  return { ingested, skipped, errors, lastError };
+}
+
 export async function ingestPlayerHistoryEvents(
   region: AlbionRegion,
   events: AlbionEvent[]
@@ -1069,40 +1182,16 @@ export async function ingestPlayerHistoryEvents(
   }
 
   const uniqueEvents = [...uniqueById.values()];
-  const existingByEventId = await loadExistingKillEvents(
-    region,
-    uniqueEvents.map((event) => event.EventId)
-  );
-  const entityCache = createIngestEntityCache();
+  const result = await ingestRegionEventBatch(region, uniqueEvents, {
+    fetchBattleDetail: false,
+    notifyDiscord: false,
+  });
 
-  let ingested = 0;
-  let skipped = 0;
-  let failed = 0;
-
-  for (const event of uniqueEvents) {
-    if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
-      skipped += 1;
-      continue;
-    }
-
-    try {
-      const isNew = await ingestEvent(region, event, {
-        fetchBattleDetail: false,
-        entityCache,
-        existingByEventId,
-      });
-      if (isNew) ingested += 1;
-      else skipped += 1;
-    } catch (err) {
-      failed += 1;
-      console.error(
-        `[ingest] Failed player history event ${event.EventId} in ${region}:`,
-        err
-      );
-    }
-  }
-
-  return { ingested, skipped, failed };
+  return {
+    ingested: result.ingested,
+    skipped: result.skipped,
+    failed: result.errors,
+  };
 }
 
 export async function ensureKillEventInDb(
@@ -1147,56 +1236,13 @@ export async function ingestRegionEvents(
 
   try {
     const events = await client.getRecentEvents(region, 50, 0);
-    let ingested = 0;
-    let skipped = 0;
-    let eventErrors = 0;
-    let lastEventError: string | null = null;
     const battleDetailCache =
       options?.battleDetailCache ?? new Map<number, IngestBattleStats>();
-    const entityCache = createIngestEntityCache();
-    const existingByEventId = await loadExistingKillEvents(
-      region,
-      events.map((event) => event.EventId)
-    );
-    const total = events.length;
-    const startedAt = Date.now();
-
-    console.log(`[ingest] ${region} events: processing ${total}`);
-
-    for (let i = 0; i < events.length; i++) {
-      const event = events[i]!;
-      if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
-        skipped++;
-      } else {
-        try {
-          const isNew = await ingestEvent(region, event, {
-            battleDetailCache,
-            entityCache,
-            existingByEventId,
-            notifyDiscord: true,
-          });
-          if (isNew) ingested++;
-          else skipped++;
-        } catch (err) {
-          eventErrors++;
-          lastEventError =
-            err instanceof Error ? err.message : String(err);
-          console.error(
-            `[ingest] Failed event ${event.EventId} in ${region}:`,
-            lastEventError
-          );
-        }
-      }
-
-      const done = i + 1;
-      if (done === total || done % 10 === 0) {
-        console.log(
-          `[ingest] ${region} events: ${done}/${total} ` +
-            `(new=${ingested} skipped=${skipped} errors=${eventErrors} ` +
-            `${Math.round((Date.now() - startedAt) / 1000)}s)`
-        );
-      }
-    }
+    const { ingested, errors: eventErrors, lastError: lastEventError } =
+      await ingestRegionEventBatch(region, events, {
+        battleDetailCache,
+        notifyDiscord: true,
+      });
 
     const maxEventId =
       events.length > 0

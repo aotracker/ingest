@@ -2,7 +2,7 @@ import type { AlbionEvent, AlbionRegion } from "@aotracker/core/albion/types";
 import { isDiscordEnabled } from "./enabled";
 import {
   feedFilters,
-  findMatchingFeeds,
+  findMatchingFeedsForKill,
   tryClaimPost,
   type DiscordFeedRow,
 } from "./db";
@@ -58,27 +58,12 @@ export async function emitKillIngested(
     victimGuildId != null &&
     killerGuildId === victimGuildId;
 
-  const matches: DiscordFeedRow[] = [];
-
-  if (killerGuildId && !friendlyFire) {
-    matches.push(
-      ...(await findMatchingFeeds({
-        feedType: FEED_GUILD_KILLS,
-        targetAlbionId: killerGuildId,
-        region,
-      }))
-    );
-  }
-
-  if (victimGuildId) {
-    matches.push(
-      ...(await findMatchingFeeds({
-        feedType: FEED_GUILD_DEATHS,
-        targetAlbionId: victimGuildId,
-        region,
-      }))
-    );
-  }
+  const matches: DiscordFeedRow[] = await findMatchingFeedsForKill({
+    region,
+    killerGuildId,
+    victimGuildId,
+    includeKills: Boolean(killerGuildId && !friendlyFire),
+  });
 
   const occurredAt = eventOccurredAt(event);
   if (!occurredAt) return;
