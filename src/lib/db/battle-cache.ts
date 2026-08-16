@@ -8,12 +8,13 @@ import type {
   AlbionEvent,
   AlbionRegion,
 } from "../albion/types";
+import { RETAIN_FULL_DAYS } from "./retention";
 import { battleMeetsRecentIngestThreshold } from "../battles-constants";
 import { toBigInt } from "../utils";
 import { db, schema } from "./index";
 
 /** Clear heavy battle JSON older than this many days (stub columns kept). */
-export const BATTLE_DETAIL_EVICT_AFTER_DAYS = 30;
+export const BATTLE_DETAIL_EVICT_AFTER_DAYS = RETAIN_FULL_DAYS;
 const EVICT_BATCH_SIZE = 200;
 
 function topFameBattleKey(region: AlbionRegion, albionBattleId: number): string {

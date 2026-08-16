@@ -27,12 +27,6 @@ export const ownerRoleEnum = pgEnum("owner_role", [
   "participant",
 ]);
 export const itemCategoryEnum = pgEnum("item_category", ["equipment", "inventory"]);
-export const jobStatusEnum = pgEnum("job_status", [
-  "pending",
-  "processing",
-  "completed",
-  "failed",
-]);
 
 export const guilds = pgTable(
   "guilds",
@@ -176,8 +170,13 @@ export const killEvents = pgTable(
     totalVictimKillFame: bigint("total_victim_kill_fame", { mode: "number" }),
     participantCount: integer("participant_count"),
     groupMemberCount: integer("group_member_count"),
-    rawPayload: jsonb("raw_payload").notNull(),
+    rawPayload: jsonb("raw_payload"),
     detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
+    /**
+     * When set, participants/items/JSON were cleared for storage; stub columns remain.
+     * Distinct from missing rows — do not re-ingest this event.
+     */
+    detailEvictedAt: timestamp("detail_evicted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -194,6 +193,7 @@ export const killEvents = pgTable(
     index("kill_events_region_albion_battle_idx")
       .on(t.region, t.albionBattleId)
       .where(sql`${t.albionBattleId} is not null`),
+    index("kill_events_detail_evict_idx").on(t.occurredAt, t.detailEvictedAt),
   ]
 );
 
@@ -324,32 +324,6 @@ export const apiSyncState = pgTable(
     eventsIngestedLastHour: integer("events_ingested_last_hour").default(0),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   }
-);
-
-/** @deprecated Unused since BullMQ; drop after confirming the table is empty. */
-export const backgroundJobs = pgTable(
-  "background_jobs",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    dedupeKey: text("dedupe_key").notNull(),
-    queue: text("queue").notNull(),
-    name: text("name").notNull(),
-    payload: jsonb("payload").notNull().default({}),
-    status: jobStatusEnum("status").notNull().default("pending"),
-    runAt: timestamp("run_at", { withTimezone: true }).notNull().defaultNow(),
-    attempts: integer("attempts").notNull().default(0),
-    maxAttempts: integer("max_attempts").notNull().default(3),
-    lastError: text("last_error"),
-    lockedUntil: timestamp("locked_until", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    startedAt: timestamp("started_at", { withTimezone: true }),
-    completedAt: timestamp("completed_at", { withTimezone: true }),
-  },
-  (t) => [
-    index("background_jobs_status_run_at_idx").on(t.status, t.runAt),
-    index("background_jobs_queue_status_idx").on(t.queue, t.status),
-    index("background_jobs_dedupe_key_idx").on(t.dedupeKey),
-  ]
 );
 
 export const apiRequestLogs = pgTable(

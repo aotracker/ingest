@@ -11,8 +11,8 @@ export async function isKillEventCached(
       eq(schema.killEvents.eventId, eventId),
       eq(schema.killEvents.region, region)
     ),
-    columns: { detailSyncedAt: true },
+    columns: { detailSyncedAt: true, detailEvictedAt: true },
   });
 
-  return Boolean(row?.detailSyncedAt);
+  return Boolean(row?.detailSyncedAt || row?.detailEvictedAt);
 }

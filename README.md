@@ -23,7 +23,7 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 | `npm run db:apply-discord-bot` | Discord servers/feeds/post-log tables |
 | `npm run jobs:ingest` | One-off ingest poll |
 | `npm run jobs:health` | One-off API health check |
-| `npm run db:evict-battle-details` | Weekly battle JSON eviction |
+| `npm run db:retain` | Weekly retention (battle JSON, kill compact, hour-stat purge). `--dry-run` first. After the first real kill compact, run `VACUUM ANALYZE kill_events, kill_participants, kill_items;` on Postgres. |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest unit tests |
 | `npm run check:drift` | Diff watched `src/lib` copies against sibling `client/` |

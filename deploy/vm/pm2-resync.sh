@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recover a dirty PM2 list and start runtime apps only (never battle-evict).
+# Recover a dirty PM2 list and start runtime apps only (never db-retain).
 # Run from /home/ubuntu/ingest as ubuntu.
 set -euo pipefail
 
@@ -15,8 +15,9 @@ if [[ ! -w "$LOG_DIR" ]]; then
 fi
 chmod u+rwx "$LOG_DIR" 2>/dev/null || true
 
-echo "==> Stopping battle-evict if it was started by a reload…"
-npx pm2 stop battle-evict >/dev/null 2>&1 || true
+echo "==> Removing leftover battle-evict (replaced by db-retain)…"
+npx pm2 delete battle-evict >/dev/null 2>&1 || true
+npx pm2 stop db-retain >/dev/null 2>&1 || true
 
 RUNTIME_NAMES="$(node deploy/vm/pm2-runtime-names.cjs)"
 if [[ -z "$RUNTIME_NAMES" ]]; then
@@ -32,11 +33,11 @@ done
 
 npx pm2 start ecosystem.config.cjs --only "$RUNTIME_NAMES" --update-env
 
-if ! npx pm2 describe battle-evict >/dev/null 2>&1; then
-  echo "==> Registering battle-evict cron (then stopping so it does not run now)…"
-  npx pm2 start ecosystem.config.cjs --only battle-evict
+if ! npx pm2 describe db-retain >/dev/null 2>&1; then
+  echo "==> Registering db-retain cron (then stopping so it does not run now)…"
+  npx pm2 start ecosystem.config.cjs --only db-retain
 fi
-npx pm2 stop battle-evict >/dev/null 2>&1 || true
+npx pm2 stop db-retain >/dev/null 2>&1 || true
 
 npx pm2 save
 npx pm2 status
@@ -45,4 +46,4 @@ echo ""
 echo "==> Done. Verify:"
 echo "    curl -s http://127.0.0.1:\${INGEST_API_PORT:-3001}/health"
 echo "    npx pm2 logs ingest-scheduler --lines 30"
-echo "    battle-evict should be 'stopped' until Sun 05:30 UTC"
+echo "    db-retain should be 'stopped' until Sun 05:30 UTC"

@@ -8,9 +8,10 @@
  * backfill add more, but peak ZvZ can still outrun discovery — hour ranks are
  * trustworthy for large PvP guilds, not for precise small-guild ordering.
  */
-import { sql } from "drizzle-orm";
+import { lt, sql } from "drizzle-orm";
 import type { AlbionRegion, ContentType } from "@aotracker/core/albion/types";
 import { db, schema } from "@aotracker/core/db";
+import { RETAIN_FULL_DAYS, retainFullCutoff } from "@aotracker/core/db/retention";
 
 type HourStatsTx = Pick<typeof db, "insert">;
 
@@ -167,4 +168,49 @@ export async function recordGuildHourActivity(
         fame: sql`${schema.guildHourStats.fame} + excluded.fame`,
       },
     });
+}
+
+export async function purgeExpiredGuildHourStats(options?: {
+  olderThanDays?: number;
+  dryRun?: boolean;
+}): Promise<{ playersDeleted: number; statsDeleted: number }> {
+  const olderThanDays = options?.olderThanDays ?? RETAIN_FULL_DAYS;
+  const dryRun = options?.dryRun === true;
+  const cutoffDate = (
+    options?.olderThanDays != null
+      ? new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000)
+      : retainFullCutoff()
+  )
+    .toISOString()
+    .slice(0, 10);
+
+  const [playerCount, statsCount] = await Promise.all([
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.guildHourPlayers)
+      .where(lt(schema.guildHourPlayers.utcDate, cutoffDate)),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.guildHourStats)
+      .where(lt(schema.guildHourStats.utcDate, cutoffDate)),
+  ]);
+  const playersDeleted = playerCount[0]?.n ?? 0;
+  const statsDeleted = statsCount[0]?.n ?? 0;
+
+  if (dryRun) {
+    return { playersDeleted, statsDeleted };
+  }
+
+  if (playersDeleted > 0) {
+    await db
+      .delete(schema.guildHourPlayers)
+      .where(lt(schema.guildHourPlayers.utcDate, cutoffDate));
+  }
+  if (statsDeleted > 0) {
+    await db
+      .delete(schema.guildHourStats)
+      .where(lt(schema.guildHourStats.utcDate, cutoffDate));
+  }
+
+  return { playersDeleted, statsDeleted };
 }

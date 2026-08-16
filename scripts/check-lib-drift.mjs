@@ -13,6 +13,7 @@ const PAIRS = [
   "src/lib/albion/kills.ts",
   "src/lib/db/battle-cache.ts",
   "src/lib/db/sync.ts",
+  "src/lib/db/retention.ts",
   "src/lib/db/queries-ingest.ts",
 ];
 

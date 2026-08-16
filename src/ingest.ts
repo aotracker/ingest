@@ -47,10 +47,12 @@ import {
   incrementEventsIngested,
 } from "@aotracker/core/db/queries-ingest";
 import {
+  HISTORY_SYNC_STALE_MS,
   shouldUpdateEntity,
   isSyncStale,
   profileFieldsChanged,
 } from "@aotracker/core/db/sync";
+import { isWithinRetainFullWindow } from "@aotracker/core/db/retention";
 import {
   CircuitOpenError,
   isCircuitOpenError,
@@ -95,6 +97,7 @@ function memoizeEntity(
 type ExistingKillEventRow = {
   id: string;
   detailSyncedAt: Date | null;
+  detailEvictedAt: Date | null;
 };
 
 async function loadExistingKillEvents(
@@ -110,6 +113,7 @@ async function loadExistingKillEvents(
       eventId: schema.killEvents.eventId,
       id: schema.killEvents.id,
       detailSyncedAt: schema.killEvents.detailSyncedAt,
+      detailEvictedAt: schema.killEvents.detailEvictedAt,
     })
     .from(schema.killEvents)
     .where(
@@ -120,7 +124,11 @@ async function loadExistingKillEvents(
     );
 
   for (const row of rows) {
-    found.set(row.eventId, { id: row.id, detailSyncedAt: row.detailSyncedAt });
+    found.set(row.eventId, {
+      id: row.id,
+      detailSyncedAt: row.detailSyncedAt,
+      detailEvictedAt: row.detailEvictedAt,
+    });
   }
   return found;
 }
@@ -933,10 +941,19 @@ export async function upsertKillEventDetail(
           eq(schema.killEvents.eventId, event.EventId),
           eq(schema.killEvents.region, region)
         ),
-        columns: { id: true, detailSyncedAt: true },
+        columns: { id: true, detailSyncedAt: true, detailEvictedAt: true },
       });
 
+  if (existing?.detailEvictedAt) return false;
   if (existing?.detailSyncedAt) return false;
+
+  const occurredAt = new Date(event.TimeStamp);
+  if (
+    !Number.isNaN(occurredAt.getTime()) &&
+    !isWithinRetainFullWindow(occurredAt)
+  ) {
+    return false;
+  }
 
   // History backfills skip battle fetches (rate limit) and never auto-queue
   // sync-battle — kill events only store albionBattleId; detail loads on visit
@@ -1002,7 +1019,7 @@ export async function upsertKillEventDetail(
 
   const now = new Date();
   const eventRow = {
-    occurredAt: new Date(event.TimeStamp),
+    occurredAt,
     contentType,
     battleId: battleUuid,
     albionBattleId: event.BattleId ?? null,
@@ -1556,7 +1573,7 @@ export async function syncPlayerProfile(
   const needHistory =
     !existing ||
     !existing.historyLastSyncedAt ||
-    isSyncStale(existing.historyLastSyncedAt);
+    isSyncStale(existing.historyLastSyncedAt, HISTORY_SYNC_STALE_MS);
 
   if (needProfile) {
     await refreshPlayerProfile(region, albionId);
@@ -1613,7 +1630,7 @@ export async function syncGuildProfile(
     force ||
     !existing ||
     !existing.historyLastSyncedAt ||
-    isSyncStale(existing.historyLastSyncedAt);
+    isSyncStale(existing.historyLastSyncedAt, HISTORY_SYNC_STALE_MS);
   const needRecentBattles =
     force ||
     !existing ||

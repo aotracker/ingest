@@ -34,7 +34,7 @@ if [[ ! -d "$INGEST_DIR" ]]; then
   exit 1
 fi
 
-# Never `pm2 restart ecosystem.config.cjs` — that also runs battle-evict.
+# Never `pm2 restart ecosystem.config.cjs` — that also runs db-retain.
 runtime_apps=(
   ingest-api
   ingest-scheduler

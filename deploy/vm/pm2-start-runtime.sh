@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start or reload long-running ingest apps. Never touches battle-evict.
+# Start or reload long-running ingest apps. Never touches db-retain.
 set -euo pipefail
 
 INGEST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -25,4 +25,9 @@ if ! npx pm2 startOrReload ecosystem.config.cjs --update-env --only "$RUNTIME_NA
   exit 0
 fi
 
-npx pm2 stop battle-evict >/dev/null 2>&1 || true
+npx pm2 delete battle-evict >/dev/null 2>&1 || true
+if ! npx pm2 describe db-retain >/dev/null 2>&1; then
+  echo "==> Registering db-retain cron (then stopping so it does not run now)…"
+  npx pm2 start ecosystem.config.cjs --only db-retain
+fi
+npx pm2 stop db-retain >/dev/null 2>&1 || true

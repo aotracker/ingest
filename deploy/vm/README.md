@@ -28,7 +28,7 @@ PM2 runs the ingest HTTP API and BullMQ workers as separate managed processes vi
 | `ingest-scheduler` | `tsx src/worker.ts scheduler` | Repeatable jobs only: 25m ingest poll, ~45s live events, 5m health, 5m Discord catch-up |
 | `ingest-worker` | `tsx src/worker.ts process` | Processors for `ingest`, `refresh`, and `discord` queues |
 | `discord-bot` | `tsx src/discord/start.ts` | Discord gateway + slash commands. **Only started when `DISCORD_ENABLED=1`** |
-| `battle-evict` | `tsx scripts/evict-stale-battle-details.ts` | Weekly battle JSON eviction (Sun 05:30 UTC). Do not `pm2 restart` the whole ecosystem — that runs eviction immediately |
+| `db-retain` | `tsx scripts/db-retain.ts` | Weekly retention (Sun 05:30 UTC): battle JSON eviction, kill compact, hour-stat purge. Do not `pm2 restart` the whole ecosystem — that runs retention immediately |
 
 Per-app logs are in `logs/<name>-out.log` and `logs/<name>-error.log`. `pm2-logrotate` is installed by `pm2-setup.sh`.
 
@@ -105,24 +105,24 @@ npm run pm2:startOrReload
 npx pm2 save
 ```
 
-`pm2:startOrReload` starts newly added apps (for example `ingest-scheduler`) and reloads existing ones. Avoid `npm run pm2:restart` unless you intend to run `battle-evict` immediately.
+`pm2:startOrReload` starts newly added apps (for example `ingest-scheduler`) and reloads existing ones. Avoid `npm run pm2:restart` unless you intend to run `db-retain` immediately.
 
 ### One-time cutover (combined worker → split)
 
-Do **not** run `npx pm2 startOrReload ecosystem.config.cjs` by itself. That reloads `battle-evict` (runs eviction immediately) and fails if `logs/` is not writable or old PIDs are gone.
+Do **not** run `npx pm2 startOrReload ecosystem.config.cjs` by itself. That reloads `db-retain` (runs retention immediately) and fails if `logs/` is not writable or old PIDs are gone.
 
 ```bash
 cd /home/ubuntu/ingest
 git pull && npm ci
 # Stop accidental eviction first if a previous reload started it
-npx pm2 stop battle-evict
+npx pm2 stop db-retain
 sudo chown -R ubuntu:ubuntu logs
 chmod u+rwx logs
 bash deploy/vm/pm2-resync.sh
 curl -s http://127.0.0.1:3001/health
 ```
 
-`pm2-resync.sh` deletes dead runtime apps, starts `ingest-api` / `ingest-scheduler` / `ingest-worker` (and discord/regionals if enabled), and leaves `battle-evict` **stopped** until Sun 05:30 UTC.
+`pm2-resync.sh` deletes dead runtime apps, starts `ingest-api` / `ingest-scheduler` / `ingest-worker` (and discord/regionals if enabled), deletes leftover `battle-evict`, and leaves `db-retain` **stopped** until Sun 05:30 UTC.
 
 If `logs/` is owned by root (`EACCES: permission denied, open '.../logs/...'`), `chown` as above. The ecosystem falls back to `~/.pm2/logs` when `ingest/logs` is not writable.
 
@@ -151,8 +151,11 @@ Or run individual scripts:
 | `npm run db:apply-battles-and-participants-idx` | Battles feed + player-analytics indexes |
 | `npm run db:apply-guild-hour-stats` | Guild UTC-hour activity tables |
 | `npm run db:apply-discord-bot` | Discord servers, feeds, and post-log tables |
+| `npm run db:apply-kill-detail-eviction` | Kill `detail_evicted_at` + nullable `raw_payload`; drop unused `background_jobs` |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
+
+After the first weekly `db-retain` run that actually compacts kills, run `VACUUM ANALYZE kill_events, kill_participants, kill_items;` inside the Postgres container. Do not use `VACUUM FULL` unless you can take a lock.
 
 For **local dev**, use `npm run db:push` from `client/` against local Docker Postgres only.
 
@@ -195,7 +198,7 @@ BullMQ requires a **writable Redis master**. The local Docker Redis should never
 |-------|----------|
 | Redis entrypoint | Runs `REPLICAOF NO ONE` on every container start |
 | Docker healthcheck | Fails unless Redis is `role:master` and accepts writes |
-| VM watchdog cron | Every 2 min: promote Redis if needed; restart `ingest-api` / `ingest-scheduler` / `ingest-worker` (and optional bot/regionals) if writes still fail. Never restarts `battle-evict`. |
+| VM watchdog cron | Every 2 min: promote Redis if needed; restart `ingest-api` / `ingest-scheduler` / `ingest-worker` (and optional bot/regionals) if writes still fail. Never restarts `db-retain`. |
 | Ingest worker / API | Heartbeat every 60s; exit after 3 consecutive READONLY errors (PM2 restarts) |
 | `GET /health` | Returns 503 when Redis is not writable |
 
@@ -220,7 +223,7 @@ docker exec albion-redis redis-cli INFO replication | grep role
 # If role:slave, promote this instance back to master:
 docker exec albion-redis redis-cli REPLICAOF NO ONE
 
-# Restart ingest runtime after Redis is writable (not battle-evict):
+# Restart ingest runtime after Redis is writable (not db-retain):
 cd /home/ubuntu/ingest && npx pm2 restart ingest-api ingest-scheduler ingest-worker
 ```
 
@@ -245,5 +248,5 @@ To **expand Redis** on the 24 GB VM, raise both `mem_limit` and `maxmemory` in `
 |------|---------|
 | Status | `npm run pm2:status` |
 | Logs | `npm run pm2:logs -- ingest-scheduler`, `npm run pm2:logs -- ingest-worker`, or `tail -f logs/ingest-scheduler-out.log` |
-| Restart | `npm run pm2:startOrReload` (deploy). Do not `pm2:restart` the whole ecosystem (runs `battle-evict`). |
+| Restart | `npm run pm2:startOrReload` (deploy). Do not `pm2:restart` the whole ecosystem (runs `db-retain`). |
 | Deploy | `bash deploy/vm/pm2-deploy.sh` |

@@ -1,6 +1,9 @@
 import { createHash } from "crypto";
 
-export const HISTORY_SYNC_STALE_MS = 15 * 60 * 1000;
+/** Profile header refresh on page visit. */
+export const PROFILE_SYNC_STALE_MS = 15 * 60 * 1000;
+/** Kill/death history lists — longer so crawlers do not re-ingest every visit. */
+export const HISTORY_SYNC_STALE_MS = 24 * 60 * 60 * 1000;
 
 export function hashPayload(value: unknown): string {
   const normalized = stableStringify(value);
@@ -65,7 +68,7 @@ export function shouldUpdateEntity(
 
 export function isSyncStale(
   lastSyncedAt: Date | null | undefined,
-  thresholdMs = HISTORY_SYNC_STALE_MS
+  thresholdMs = PROFILE_SYNC_STALE_MS
 ): boolean {
   if (!lastSyncedAt) return true;
   return Date.now() - lastSyncedAt.getTime() > thresholdMs;

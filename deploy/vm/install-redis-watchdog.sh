@@ -43,7 +43,7 @@ else
 fi
 
 if [[ -d "$INGEST_DIR" && -f "$INGEST_DIR/package.json" ]]; then
-  echo "==> Restart ingest PM2 runtime apps (not battle-evict)"
+  echo "==> Restart ingest PM2 runtime apps (not db-retain)"
   sudo -u ubuntu bash -c "
     cd '$INGEST_DIR'
     names=()
