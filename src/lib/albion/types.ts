@@ -104,7 +104,9 @@ export interface AlbionGuildInfo {
   AllianceId?: string;
   AllianceName?: string;
   AllianceTag?: string;
+  /** `/guilds/{id}` uses camelCase; search results use PascalCase. */
   killFame?: number;
+  KillFame?: number;
   DeathFame?: number;
   AttacksWon?: number;
   DefensesWon?: number;

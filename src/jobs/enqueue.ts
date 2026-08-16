@@ -45,6 +45,14 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
       ? JOB_PRIORITY_PROMOTED
       : JOB_PRIORITY_DEFAULT;
 
+  const existing = await queue.getJob(input.dedupeKey);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "completed" || state === "failed") {
+      await existing.remove();
+    }
+  }
+
   try {
     await queue.add(input.name, payload, {
       jobId: input.dedupeKey,

@@ -133,6 +133,20 @@ type GuildRef = {
   AllianceTag?: string;
 };
 
+function nonempty(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+/** True for `/guilds/{id}` payloads. Search hits only have id/name/alliance. */
+function isCompleteGuildInfo(info: AlbionGuildInfo): boolean {
+  return (
+    info.MemberCount != null ||
+    Boolean(nonempty(info.FounderId)) ||
+    Boolean(nonempty(info.Founded))
+  );
+}
+
 export async function upsertGuild(
   region: AlbionRegion,
   ref: GuildRef,
@@ -166,9 +180,9 @@ async function upsertGuildRow(
   if (existing) {
     const incoming = {
       name: ref.GuildName,
-      allianceId: ref.AllianceId ?? existing.allianceId,
-      allianceName: ref.AllianceName ?? existing.allianceName,
-      allianceTag: ref.AllianceTag ?? existing.allianceTag,
+      allianceId: nonempty(ref.AllianceId) ?? existing.allianceId,
+      allianceName: nonempty(ref.AllianceName) ?? existing.allianceName,
+      allianceTag: nonempty(ref.AllianceTag) ?? existing.allianceTag,
     };
     if (
       !profileFieldsChanged(
@@ -201,9 +215,9 @@ async function upsertGuildRow(
       albionId: ref.GuildId,
       region,
       name: ref.GuildName,
-      allianceId: ref.AllianceId,
-      allianceName: ref.AllianceName,
-      allianceTag: ref.AllianceTag,
+      allianceId: nonempty(ref.AllianceId),
+      allianceName: nonempty(ref.AllianceName),
+      allianceTag: nonempty(ref.AllianceTag),
     })
     .returning({ id: schema.guilds.id });
 
@@ -216,6 +230,18 @@ export async function upsertGuildFromInfo(
 ): Promise<string | null> {
   if (!info.Id || !info.Name) return null;
 
+  // Search / live-search hits are not full profiles. Writing them through this
+  // path stamps lastSyncedAt and skips the real `/guilds/{id}` fetch.
+  if (!isCompleteGuildInfo(info)) {
+    return upsertGuild(region, {
+      GuildId: info.Id,
+      GuildName: info.Name,
+      AllianceId: info.AllianceId,
+      AllianceName: info.AllianceName,
+      AllianceTag: info.AllianceTag,
+    });
+  }
+
   const existing = await db.query.guilds.findFirst({
     where: and(
       eq(schema.guilds.albionId, info.Id),
@@ -226,10 +252,10 @@ export async function upsertGuildFromInfo(
   const now = new Date();
   const incomingScalars = {
     name: info.Name,
-    allianceId: info.AllianceId ?? null,
-    allianceName: info.AllianceName ?? null,
-    allianceTag: info.AllianceTag ?? null,
-    killFame: toBigInt(info.killFame) ?? 0,
+    allianceId: nonempty(info.AllianceId),
+    allianceName: nonempty(info.AllianceName),
+    allianceTag: nonempty(info.AllianceTag),
+    killFame: toBigInt(info.KillFame ?? info.killFame) ?? 0,
     deathFame: toBigInt(info.DeathFame) ?? 0,
     memberCount: info.MemberCount ?? null,
   };
@@ -1573,6 +1599,7 @@ export async function syncGuildProfile(
       battlesLastSyncedAt: true,
       recentBattlesPayload: true,
       topBattlesPayload: true,
+      memberCount: true,
     },
   });
 
@@ -1580,6 +1607,7 @@ export async function syncGuildProfile(
     force ||
     !existing ||
     !existing.lastSyncedAt ||
+    existing.memberCount == null ||
     isSyncStale(existing.lastSyncedAt);
   const needHistory =
     force ||
