@@ -21,9 +21,15 @@ import {
   setFeedChannel,
   trackGuildFeeds,
   untrackGuildFeeds,
+  updateFeedFilters,
   upsertDiscordServer,
 } from "./db";
-import { FEED_GUILD_DEATHS, FEED_GUILD_KILLS } from "./types";
+import {
+  FEED_GUILD_DEATHS,
+  FEED_GUILD_KILLS,
+  parseFilters,
+  type DiscordFeedFilters,
+} from "./types";
 import { regionLabel } from "./format";
 
 function isRegion(value: string | null): value is AlbionRegion {
@@ -94,6 +100,30 @@ export const slashCommandBuilders = [
   guildCommand()
     .setName("status")
     .setDescription("Show AOTracker Discord feed settings for this server"),
+  guildCommand()
+    .setName("feed-filters")
+    .setDescription("Set min fame, content types, or pause Discord kill posts")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addIntegerOption((option) =>
+      option
+        .setName("min-fame")
+        .setDescription("Minimum kill fame (0 = any)")
+        .setMinValue(0)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("min-silver")
+        .setDescription("Minimum estimated loot silver (0 = any)")
+        .setMinValue(0)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("content")
+        .setDescription("Content types: all, or SOLO,GROUP,ZVZ")
+    )
+    .addBooleanOption((option) =>
+      option.setName("paused").setDescription("Pause Discord posts")
+    ),
 ];
 
 export async function handleAutocomplete(
@@ -160,6 +190,9 @@ export async function handleChatCommand(
       return;
     case "status":
       await handleStatus(interaction);
+      return;
+    case "feed-filters":
+      await handleFeedFilters(interaction);
       return;
     default:
       await interaction.reply({
@@ -262,10 +295,73 @@ async function handleStatus(
     return;
   }
   const target = kills ?? deaths;
+  const filters = parseFilters((kills ?? deaths)?.filters);
   const lines = [
     `**Guild:** ${target?.targetName ?? "?"} (${regionLabel(target?.region ?? "americas")})`,
     `**Kills:** ${kills?.channelId ? `<#${kills.channelId}>` : "not set"}`,
     `**Deaths:** ${deaths?.channelId ? `<#${deaths.channelId}>` : "not set"}`,
+    `**Paused:** ${filters.paused ? "yes" : "no"}`,
+    `**Min fame:** ${filters.minFame ?? 0}`,
+    `**Min silver:** ${filters.minSilver ?? 0}`,
+    `**Content:** ${filters.contentTypes?.length ? filters.contentTypes.join(", ") : "all"}`,
   ];
   await interaction.reply({ content: lines.join("\n"), ephemeral: true });
+}
+
+async function handleFeedFilters(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const feeds = await listFeedsForServer(interaction.guildId!);
+  if (feeds.length === 0) {
+    await interaction.reply({
+      content: "Run `/track` first to choose an Albion guild.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const patch: DiscordFeedFilters = {};
+  const minFame = interaction.options.getInteger("min-fame");
+  const minSilver = interaction.options.getInteger("min-silver");
+  const content = interaction.options.getString("content");
+  const paused = interaction.options.getBoolean("paused");
+
+  if (minFame != null) {
+    patch.minFame = minFame > 0 ? minFame : undefined;
+  }
+  if (minSilver != null) {
+    patch.minSilver = minSilver > 0 ? minSilver : undefined;
+  }
+  if (content != null) {
+    const types = content
+      .split(/[,\s]+/)
+      .map((value) => value.trim().toUpperCase())
+      .filter((value) => value === "SOLO" || value === "GROUP" || value === "ZVZ");
+    patch.contentTypes = types.length > 0 ? types : undefined;
+  }
+  if (paused != null) {
+    patch.paused = paused || undefined;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    await interaction.reply({
+      content:
+        "Provide at least one option: `min-fame`, `min-silver`, `content`, or `paused`.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const updated = await updateFeedFilters(interaction.guildId!, patch);
+  const next = { ...parseFilters(feeds[0]?.filters), ...patch };
+  await interaction.reply({
+    content: [
+      `Updated filters on ${updated} feed${updated === 1 ? "" : "s"}.`,
+      `Paused: ${next.paused ? "yes" : "no"}`,
+      `Min fame: ${next.minFame ?? 0}`,
+      `Min silver: ${next.minSilver ?? 0}`,
+      `Content: ${next.contentTypes?.length ? next.contentTypes.join(", ") : "all"}`,
+    ].join("\n"),
+    ephemeral: true,
+  });
 }

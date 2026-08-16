@@ -1435,12 +1435,14 @@ export async function refreshAllianceProfile(
   const needRecentBattles = guildBattleListNeedsRefresh(
     existing?.recentBattlesPayload,
     existing?.topBattlesPayload,
-    existing?.battlesLastSyncedAt
+    existing?.battlesLastSyncedAt,
+    { requireAlliancePreview: true }
   );
   const needTopBattles = guildBattleListNeedsRefresh(
     existing?.topBattlesPayload,
     existing?.recentBattlesPayload,
-    existing?.battlesLastSyncedAt
+    existing?.battlesLastSyncedAt,
+    { requireAlliancePreview: true }
   );
 
   if (!needRecentBattles && !needTopBattles) return;

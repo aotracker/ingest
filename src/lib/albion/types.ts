@@ -210,6 +210,9 @@ export interface GuildBattleSummary extends AlbionBattleSummary {
   /** Guilds in the fight (preview for card title). */
   guilds: { id: string; name: string }[];
   guildCount: number;
+  /** Alliances in the fight (preview above guilds on alliance profile cards). */
+  alliances?: { id: string; name: string }[];
+  allianceCount?: number;
 }
 
 export interface ApiHealthMetrics {

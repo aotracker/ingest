@@ -399,6 +399,26 @@ export function feedFilters(feed: DiscordFeedRow): DiscordFeedFilters {
   return parseFilters(feed.filters);
 }
 
+export async function updateFeedFilters(
+  discordGuildId: string,
+  patch: DiscordFeedFilters
+): Promise<number> {
+  const feeds = await listFeedsForServer(discordGuildId);
+  if (feeds.length === 0) return 0;
+
+  const now = new Date();
+  let updated = 0;
+  for (const feed of feeds) {
+    const next = { ...feedFilters(feed), ...patch };
+    await db
+      .update(schema.discordFeeds)
+      .set({ filters: next, updatedAt: now })
+      .where(eq(schema.discordFeeds.id, feed.id));
+    updated += 1;
+  }
+  return updated;
+}
+
 export async function listPlayerAlbionIdsForGuild(
   region: AlbionRegion,
   guildAlbionId: string,

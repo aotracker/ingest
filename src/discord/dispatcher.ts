@@ -1,4 +1,5 @@
 import type { AlbionEvent, AlbionRegion } from "@aotracker/core/albion/types";
+import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
 import { isDiscordEnabled } from "./enabled";
 import {
   feedFilters,
@@ -31,11 +32,19 @@ function notifyCutoff(feed: DiscordFeedRow): Date {
 function passesFilters(
   feed: DiscordFeedRow,
   fame: number,
-  occurredAt: Date
+  occurredAt: Date,
+  contentType?: string
 ): boolean {
   const filters = feedFilters(feed);
   if (filters.paused) return false;
   if (filters.minFame != null && fame < filters.minFame) return false;
+  if (
+    filters.contentTypes?.length &&
+    contentType &&
+    !filters.contentTypes.includes(contentType)
+  ) {
+    return false;
+  }
   if (occurredAt < notifyCutoff(feed)) return false;
   return true;
 }
@@ -68,11 +77,21 @@ export async function emitKillIngested(
   const occurredAt = eventOccurredAt(event);
   if (!occurredAt) return;
 
+  const counts = extractEventCounts(event);
+  const contentType = classifyContentType({
+    killer: event.Killer,
+    victim: event.Victim,
+    participantCount: counts.participantCount,
+    groupMemberCount: counts.groupMemberCount,
+    groupMembers: event.GroupMembers,
+    participants: event.Participants,
+  });
+
   const eventKey = killEventKey(region, event.EventId);
 
   for (const feed of matches) {
     if (!feed.channelId) continue;
-    if (!passesFilters(feed, fame, occurredAt)) continue;
+    if (!passesFilters(feed, fame, occurredAt, contentType)) continue;
     const claimed = await tryClaimPost(feed.id, eventKey);
     if (!claimed) continue;
     await enqueueNotifyDiscord({

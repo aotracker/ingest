@@ -55,7 +55,8 @@ export async function cacheAllianceBattleLists(
 
   const cacheComplete = isGuildBattleCacheComplete(
     recentBattlesPayload,
-    topBattlesPayload
+    topBattlesPayload,
+    { requireAlliancePreview: true }
   );
 
   await db

@@ -13,6 +13,7 @@ import {
   buildAlbionHttpFailure,
   isHttpNotFoundError,
 } from "./errors";
+import { resolveBattleTotalPlayers } from "./battles";
 import type {
   AlbionAllianceInfo,
   AlbionBattle,
@@ -508,6 +509,6 @@ function normalizeBattleSummary(battle: AlbionBattle): AlbionBattleSummary {
     startTime: battle.startTime ?? null,
     totalFame: battle.totalFame ?? null,
     totalKills: battle.totalKills ?? null,
-    totalPlayers: battle.totalPlayers ?? null,
+    totalPlayers: resolveBattleTotalPlayers(battle),
   };
 }

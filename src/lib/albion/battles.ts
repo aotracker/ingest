@@ -62,6 +62,34 @@ function battleGuildPreview(battle: AlbionBattle): {
   };
 }
 
+/** Players in this specific fight. 0/missing Albion list fields are unknown. */
+export function resolveBattleTotalPlayers(
+  battle: Pick<AlbionBattle, "totalPlayers" | "players" | "guilds" | "alliances">
+): number | null {
+  if (typeof battle.totalPlayers === "number" && battle.totalPlayers > 0) {
+    return battle.totalPlayers;
+  }
+  if (battle.players) {
+    const fromPlayers = Object.keys(battle.players).length;
+    if (fromPlayers > 0) return fromPlayers;
+  }
+  const fromGuilds = sumListedPlayers(battle.guilds);
+  if (fromGuilds > 0) return fromGuilds;
+  const fromAlliances = sumListedPlayers(battle.alliances);
+  if (fromAlliances > 0) return fromAlliances;
+  return null;
+}
+
+function sumListedPlayers(
+  groups?: Record<string, { players?: number }> | null
+): number {
+  if (!groups) return 0;
+  return Object.values(groups).reduce(
+    (sum, row) => sum + (typeof row.players === "number" ? row.players : 0),
+    0
+  );
+}
+
 export function toGuildBattleSummary(
   battle: AlbionBattle,
   guildId: string
@@ -78,13 +106,103 @@ export function toGuildBattleSummary(
     startTime: battle.startTime ?? null,
     totalFame: battle.totalFame ?? null,
     totalKills: battle.totalKills ?? null,
-    totalPlayers:
-      battle.totalPlayers ?? (players ? Object.keys(players).length : null),
+    totalPlayers: resolveBattleTotalPlayers(battle),
     guildKillFame: guildEntry?.killFame ?? null,
     guildKills: guildEntry?.kills ?? null,
     guildDeaths: guildEntry?.deaths ?? null,
     guildMembers,
     ...guildPreview,
+  };
+}
+
+export interface BattleEntityParticipation {
+  killFame: number | null;
+  kills: number | null;
+  deaths: number | null;
+  members: number;
+}
+
+function asStatList<T>(
+  value: Record<string, T> | T[] | null | undefined
+): T[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : Object.values(value);
+}
+
+/** This alliance's participation in a specific fight. */
+export function allianceBattleParticipation(
+  battle: {
+    alliances?:
+      | Record<string, AlbionBattleAllianceStats>
+      | AlbionBattleAllianceStats[];
+    guilds?: Record<string, AlbionBattleGuildStats> | AlbionBattleGuildStats[];
+    players?: Record<string, AlbionBattlePlayer> | AlbionBattlePlayer[];
+  },
+  allianceId: string
+): BattleEntityParticipation {
+  const entry = asStatList(battle.alliances).find((row) => row.id === allianceId);
+  const fromPlayers = asStatList(battle.players).filter(
+    (player) => player.allianceId === allianceId
+  ).length;
+  const fromGuilds = asStatList(battle.guilds)
+    .filter((guild) => guild.allianceId === allianceId)
+    .reduce(
+      (sum, guild) =>
+        sum + (typeof guild.players === "number" ? guild.players : 0),
+      0
+    );
+  const members =
+    fromPlayers > 0
+      ? fromPlayers
+      : typeof entry?.players === "number" && entry.players > 0
+        ? entry.players
+        : fromGuilds;
+
+  return {
+    killFame: entry?.killFame ?? null,
+    kills: entry?.kills ?? null,
+    deaths: entry?.deaths ?? null,
+    members,
+  };
+}
+
+export function battleAlliancePreview(battle: {
+  alliances?:
+    | Record<string, AlbionBattleAllianceStats>
+    | AlbionBattleAllianceStats[];
+}): {
+  alliances: { id: string; name: string }[];
+  allianceCount: number;
+} {
+  const alliances = sortByFameThenKills(asStatList(battle.alliances));
+  return {
+    alliances: alliances.slice(0, BATTLES_FEED_PREVIEW_LIMIT).map((a) => ({
+      id: a.id,
+      name: a.name,
+    })),
+    allianceCount: alliances.length,
+  };
+}
+
+export function toAllianceBattleSummary(
+  battle: AlbionBattle,
+  allianceId: string
+): GuildBattleSummary {
+  const participation = allianceBattleParticipation(battle, allianceId);
+  const guildPreview = battleGuildPreview(battle);
+
+  return {
+    id: battle.id ?? battle.albionId ?? 0,
+    startTime: battle.startTime ?? null,
+    totalFame: battle.totalFame ?? null,
+    totalKills: battle.totalKills ?? null,
+    totalPlayers: resolveBattleTotalPlayers(battle),
+    guildKillFame: participation.killFame,
+    guildKills: participation.kills,
+    guildDeaths: participation.deaths,
+    guildMembers: participation.members,
+    ...guildPreview,
+    ...battleAlliancePreview(battle),
   };
 }
 
@@ -144,10 +262,17 @@ function battleListMissingGuildPreview(battles: GuildBattleSummary[]): boolean {
   );
 }
 
+function battleListMissingAlliancePreview(battles: GuildBattleSummary[]): boolean {
+  return battles.some(
+    (item) =>
+      item != null && typeof item === "object" && !("alliances" in item)
+  );
+}
+
 /** True when cached battle list should be refetched (null, malformed, or untrusted legacy empty). */
 export function isGuildBattleListCacheMissing(
   payload: unknown,
-  options?: { counterpartHasBattles?: boolean }
+  options?: { counterpartHasBattles?: boolean; requireAlliancePreview?: boolean }
 ): boolean {
   if (payload == null) return true;
 
@@ -155,7 +280,12 @@ export function isGuildBattleListCacheMissing(
     if (payload.length === 0) {
       return options?.counterpartHasBattles === true;
     }
-    return battleListMissingGuildPreview(payload as GuildBattleSummary[]);
+    const battles = payload as GuildBattleSummary[];
+    return (
+      battleListMissingGuildPreview(battles) ||
+      (options?.requireAlliancePreview === true &&
+        battleListMissingAlliancePreview(battles))
+    );
   }
 
   const cached = payload as Partial<GuildBattleListCache>;
@@ -168,7 +298,11 @@ export function isGuildBattleListCacheMissing(
 
   if (cached.battles.length === 0) return false;
 
-  return battleListMissingGuildPreview(cached.battles);
+  return (
+    battleListMissingGuildPreview(cached.battles) ||
+    (options?.requireAlliancePreview === true &&
+      battleListMissingAlliancePreview(cached.battles))
+  );
 }
 
 export function guildBattleListCacheHasBattles(payload: unknown): boolean {
@@ -187,28 +321,32 @@ export function guildBattleListNeedsRefresh(
   payload: unknown,
   counterpartPayload: unknown,
   battlesLastSyncedAt: Date | null | undefined,
-  options?: { force?: boolean }
+  options?: { force?: boolean; requireAlliancePreview?: boolean }
 ): boolean {
   if (options?.force) return true;
   if (!battlesLastSyncedAt || isSyncStale(battlesLastSyncedAt)) return true;
   return isGuildBattleListCacheMissing(payload, {
     counterpartHasBattles: guildBattleListCacheHasBattles(counterpartPayload),
+    requireAlliancePreview: options?.requireAlliancePreview,
   });
 }
 
 /** Both lists are present and trusted (verified empty or populated). */
 export function isGuildBattleCacheComplete(
   recentPayload: unknown,
-  topPayload: unknown
+  topPayload: unknown,
+  options?: { requireAlliancePreview?: boolean }
 ): boolean {
   const topHasBattles = guildBattleListCacheHasBattles(topPayload);
   const recentHasBattles = guildBattleListCacheHasBattles(recentPayload);
   return (
     !isGuildBattleListCacheMissing(recentPayload, {
       counterpartHasBattles: topHasBattles,
+      requireAlliancePreview: options?.requireAlliancePreview,
     }) &&
     !isGuildBattleListCacheMissing(topPayload, {
       counterpartHasBattles: recentHasBattles,
+      requireAlliancePreview: options?.requireAlliancePreview,
     })
   );
 }
@@ -341,27 +479,7 @@ export async function getAllianceBattlesBySort(
     const battles: GuildBattleSummary[] = raw
       .filter(hasBattleKillFame)
       .filter((battle): battle is AlbionBattle & { id: number } => battle.id != null)
-      .map((battle) => {
-        const guilds = battle.guilds
-          ? Object.values(battle.guilds)
-              .sort((a, b) => b.killFame - a.killFame || b.kills - a.kills)
-              .slice(0, BATTLES_FEED_PREVIEW_LIMIT)
-              .map((g) => ({ id: g.id, name: g.name }))
-          : [];
-        return {
-          id: battle.id,
-          startTime: battle.startTime ?? null,
-          totalFame: battle.totalFame ?? 0,
-          totalKills: battle.totalKills ?? 0,
-          totalPlayers: battle.totalPlayers ?? 0,
-          guildKillFame: 0,
-          guildKills: 0,
-          guildDeaths: 0,
-          guildMembers: 0,
-          guilds,
-          guildCount: battle.guilds ? Object.keys(battle.guilds).length : 0,
-        };
-      });
+      .map((battle) => toAllianceBattleSummary(battle, allianceId));
 
     return { battles, battlesError: null };
   } catch (err) {

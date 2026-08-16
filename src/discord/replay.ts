@@ -17,10 +17,21 @@ import {
   type DiscordFeedType,
 } from "./types";
 
-function feedAcceptsFame(feed: DiscordFeedRow, fame: number): boolean {
+function feedAcceptsFame(
+  feed: DiscordFeedRow,
+  fame: number,
+  contentType?: string
+): boolean {
   const filters = feedFilters(feed);
   if (filters.paused) return false;
   if (filters.minFame != null && fame < filters.minFame) return false;
+  if (
+    filters.contentTypes?.length &&
+    contentType &&
+    !filters.contentTypes.includes(contentType)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -88,7 +99,7 @@ export async function postKillToMatchingFeeds(input: {
       skipped.push(`${feed.feedType}: no channel set`);
       continue;
     }
-    if (!feedAcceptsFame(feed, fame)) {
+    if (!feedAcceptsFame(feed, fame, snapshot.contentType)) {
       skipped.push(`${feed.feedType}: filtered out`);
       continue;
     }
