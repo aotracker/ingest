@@ -23,6 +23,32 @@ export function formatUtcStamp(date: Date): string {
   return `${month} ${day}, ${year} at ${hh}:${mm}:${ss} UTC`;
 }
 
+const UTC_MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+] as const;
+
+/** Compact stamp for snapshot images where the full month name overflows. */
+export function formatUtcStampShort(date: Date): string {
+  const month = UTC_MONTHS_SHORT[date.getUTCMonth()] ?? "Jan";
+  const day = date.getUTCDate();
+  const year = date.getUTCFullYear();
+  const hh = String(date.getUTCHours()).padStart(2, "0");
+  const mm = String(date.getUTCMinutes()).padStart(2, "0");
+  const ss = String(date.getUTCSeconds()).padStart(2, "0");
+  return `${month} ${day}, ${year} ${hh}:${mm}:${ss} UTC`;
+}
+
 export function formatFame(value: number | null | undefined): string {
   if (value == null) return "0";
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}b`;

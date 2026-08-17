@@ -5,7 +5,7 @@ import {
   formatFame,
   formatItemPower,
   formatSilver,
-  formatUtcStamp,
+  formatUtcStampShort,
   itemIconCacheKey,
   regionLabel,
 } from "./format";
@@ -37,7 +37,7 @@ const MID_GAP = u(14);
 const FAME_W = u(280);
 const SIDE_W = (WIDTH - PAD * 2 - FAME_W - MID_GAP * 2) / 2;
 const SUMMARY_Y = u(72);
-const SUMMARY_H = u(188);
+const SUMMARY_H = u(200);
 const GEAR_GAP = u(20);
 const GEAR_CARD_W = (WIDTH - PAD * 2 - GEAR_GAP) / 2;
 const GEAR_CARD_Y = SUMMARY_Y + SUMMARY_H + u(16);
@@ -115,7 +115,7 @@ function svgText(
   fill: string,
   extra = ""
 ): string {
-  return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" font-family="Segoe UI, Arial, sans-serif" ${extra}>${escapeXml(text)}</text>`;
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}" font-family="Arial, Helvetica, sans-serif" ${extra}>${escapeXml(text)}</text>`;
 }
 
 function playerGuildLine(player: KillSnapshotParticipant | null): string {
@@ -205,16 +205,30 @@ function fameSummary(options: {
   x: number;
   fame: string;
   content: string;
+  region: string;
+  when: string;
 }): string {
-  const { x, fame, content } = options;
+  const { x, fame, content, region, when } = options;
   const cx = x + FAME_W / 2;
   const y = SUMMARY_Y;
+  const inset = u(20);
+  const clipW = FAME_W - inset * 2;
+  const clipId = "fame-card-clip";
 
   return `
+    <defs>
+      <clipPath id="${clipId}">
+        <rect x="${x + inset}" y="${y}" width="${clipW}" height="${SUMMARY_H}" rx="${u(8)}"/>
+      </clipPath>
+    </defs>
     <rect x="${x}" y="${y}" width="${FAME_W}" height="${SUMMARY_H}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
-    ${svgText("KILL FAME", cx, y + u(38), tx(13), "#f5c14a", 'text-anchor="middle" font-weight="700" letter-spacing="2.8"')}
-    ${svgText(fame, cx, y + u(96), tx(40), "#f5c14a", 'text-anchor="middle" font-weight="700"')}
-    ${svgText(content, cx, y + u(142), tx(16), "#d7e0ea", 'text-anchor="middle" font-weight="600"')}
+    <g clip-path="url(#${clipId})">
+      ${svgText("KILL FAME", cx, y + u(32), tx(13), "#f5c14a", 'text-anchor="middle" font-weight="700" letter-spacing="2.8"')}
+      ${svgText(fame, cx, y + u(82), tx(40), "#f5c14a", 'text-anchor="middle" font-weight="700"')}
+      ${svgText(content, cx, y + u(116), tx(16), "#d7e0ea", 'text-anchor="middle" font-weight="600"')}
+      ${svgText(region, cx, y + u(148), tx(13), "#9aa7b5", 'text-anchor="middle" font-weight="600"')}
+      ${svgText(when, cx, y + u(172), tx(12), "#7d8b9a", 'text-anchor="middle" font-weight="500"')}
+    </g>
   `;
 }
 
@@ -258,7 +272,7 @@ export async function renderKillSnapshotPng(
         : `${snapshot.assistCount} assists`
       : null;
   const contentLine = [content, assists].filter(Boolean).join(" · ");
-  const when = formatUtcStamp(snapshot.occurredAt);
+  const when = formatUtcStampShort(snapshot.occurredAt);
   const region = regionLabel(snapshot.region);
 
   const killerX = PAD;
@@ -273,9 +287,7 @@ export async function renderKillSnapshotPng(
   const svg = Buffer.from(`
     <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
       <rect width="100%" height="100%" fill="#0c0f14"/>
-      ${svgText("aotracker.net", PAD, u(44), tx(22), "#e8edf2", 'font-weight="700"')}
-      ${svgText(region, WIDTH - PAD, u(34), tx(14), "#9aa7b5", 'text-anchor="end" font-weight="600"')}
-      ${svgText(when, WIDTH - PAD, u(58), tx(13), "#7d8b9a", 'text-anchor="end" font-weight="500"')}
+      ${svgText("aotracker.net", PAD, u(48), tx(24), "#e8edf2", 'font-weight="700"')}
       ${playerSummary({
         x: killerX,
         width: SIDE_W,
@@ -287,6 +299,8 @@ export async function renderKillSnapshotPng(
         x: fameX,
         fame,
         content: contentLine,
+        region,
+        when,
       })}
       ${playerSummary({
         x: victimX,
