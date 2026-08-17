@@ -205,18 +205,16 @@ function fameSummary(options: {
   x: number;
   fame: string;
   content: string;
-  meta: string;
 }): string {
-  const { x, fame, content, meta } = options;
+  const { x, fame, content } = options;
   const cx = x + FAME_W / 2;
   const y = SUMMARY_Y;
 
   return `
     <rect x="${x}" y="${y}" width="${FAME_W}" height="${SUMMARY_H}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
     ${svgText("KILL FAME", cx, y + u(38), tx(13), "#f5c14a", 'text-anchor="middle" font-weight="700" letter-spacing="2.8"')}
-    ${svgText(fame, cx, y + u(92), tx(40), "#f5c14a", 'text-anchor="middle" font-weight="700"')}
-    ${svgText(content, cx, y + u(130), tx(16), "#d7e0ea", 'text-anchor="middle" font-weight="600"')}
-    ${svgText(meta, cx, y + u(160), tx(13), "#7d8b9a", 'text-anchor="middle" font-weight="500"')}
+    ${svgText(fame, cx, y + u(96), tx(40), "#f5c14a", 'text-anchor="middle" font-weight="700"')}
+    ${svgText(content, cx, y + u(142), tx(16), "#d7e0ea", 'text-anchor="middle" font-weight="600"')}
   `;
 }
 
@@ -261,7 +259,7 @@ export async function renderKillSnapshotPng(
       : null;
   const contentLine = [content, assists].filter(Boolean).join(" · ");
   const when = formatUtcStamp(snapshot.occurredAt);
-  const meta = `${regionLabel(snapshot.region)} · ${when}`;
+  const region = regionLabel(snapshot.region);
 
   const killerX = PAD;
   const fameX = PAD + SIDE_W + MID_GAP;
@@ -275,7 +273,9 @@ export async function renderKillSnapshotPng(
   const svg = Buffer.from(`
     <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
       <rect width="100%" height="100%" fill="#0c0f14"/>
-      ${svgText("aotracker.net", PAD, u(48), tx(24), "#e8edf2", 'font-weight="700"')}
+      ${svgText("aotracker.net", PAD, u(44), tx(22), "#e8edf2", 'font-weight="700"')}
+      ${svgText(region, WIDTH - PAD, u(34), tx(14), "#9aa7b5", 'text-anchor="end" font-weight="600"')}
+      ${svgText(when, WIDTH - PAD, u(58), tx(13), "#7d8b9a", 'text-anchor="end" font-weight="500"')}
       ${playerSummary({
         x: killerX,
         width: SIDE_W,
@@ -287,7 +287,6 @@ export async function renderKillSnapshotPng(
         x: fameX,
         fame,
         content: contentLine,
-        meta,
       })}
       ${playerSummary({
         x: victimX,
