@@ -11,32 +11,19 @@ import {
 } from "./jobs/connection";
 import { QUEUE_NAMES } from "./jobs/types";
 import {
-  getIngestQueue,
-  getRefreshQueue,
-  getSchedulerQueue,
-} from "./jobs/queues";
-import {
-  DISCORD_CATCHUP_INTERVAL_MS,
-  HEALTH_CHECK_INTERVAL_MS,
-  INGEST_POLL_INTERVAL_MS,
-  LIVE_EVENTS_INTERVAL_MS,
   recordWorkerRunError,
   recordWorkerRunSuccess,
 } from "@aotracker/core/jobs/worker-state";
 import { processBullJob } from "./processor";
+import {
+  registerRepeatableJobs,
+  repairStuckSchedulerRepeats,
+} from "./jobs/scheduler-repeats";
 import { runHealthChecks, runIngestPoll } from "./scheduled";
 import { runLiveEventsPoll } from "./discord/live-poll";
 import { runDiscordGuildCatchup } from "./discord/catchup";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 
-/**
- * Discovery poll interval. Must be longer than a typical poll (~15–20m under load)
- * so BullMQ's next repeat does not pile up while the previous run is still active.
- */
-const INGEST_LOOP_MS = INGEST_POLL_INTERVAL_MS;
-const HEALTH_LOOP_MS = HEALTH_CHECK_INTERVAL_MS;
-const LIVE_EVENTS_LOOP_MS = LIVE_EVENTS_INTERVAL_MS;
-const DISCORD_CATCHUP_LOOP_MS = DISCORD_CATCHUP_INTERVAL_MS;
 /** Lock must outlive the slowest ingest poll; default BullMQ lock is only 30s. */
 const SCHEDULER_LOCK_MS = 40 * 60 * 1000;
 const SCHEDULER_LOCK_RENEW_MS = 60 * 1000;
@@ -89,102 +76,12 @@ function installSignalHandlers(): void {
   process.on("SIGTERM", () => onSignal("SIGTERM"));
 }
 
-/**
- * Clear stale scheduler state then re-register repeatables.
- *
- * Important: do NOT pass a fixed `jobId` on repeatable jobs. BullMQ treats that
- * as a dedupe key, so a long-running ingest-poll blocks the next scheduled
- * instance and the repeat chain silently stops (health-check was unaffected
- * because it finishes in seconds).
- */
-async function registerRepeatableJobs(): Promise<void> {
-  const queue = getSchedulerQueue();
+const SCHEDULER_REPAIR_MS = 30_000;
 
-  const existing = await queue.getRepeatableJobs();
-  for (const job of existing) {
-    try {
-      await queue.removeRepeatableByKey(job.key);
-    } catch (err) {
-      console.warn(
-        `[worker] Failed to remove repeatable ${job.key}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-  if (existing.length > 0) {
-    console.log(
-      `[worker] Cleared ${existing.length} previous scheduler repeatable(s)`
-    );
-  }
-
-  // Orphaned jobs from a previous process / fixed jobId era can leave the
-  // scheduler queue in a bad state across restarts.
-  const leftover = await queue.getJobs(
-    ["active", "waiting", "delayed", "paused"],
-    0,
-    200
-  );
-  let removed = 0;
-  for (const job of leftover) {
-    if (
-      job.name !== "ingest-poll" &&
-      job.name !== "health-check" &&
-      job.name !== "live-events-poll" &&
-      job.name !== "discord-guild-catchup"
-    )
-      continue;
-    // Keep one-off manual triggers enqueued via the ingest API.
-    if (typeof job.id === "string" && job.id.startsWith("manual-")) continue;
-    try {
-      await job.remove();
-      removed += 1;
-    } catch (err) {
-      console.warn(
-        `[worker] Could not remove leftover ${job.name} ${job.id}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-  if (removed > 0) {
-    console.log(`[worker] Removed ${removed} leftover scheduler job(s)`);
-  }
-
-  // Register health first; with scheduler concurrency > 1 it can run alongside ingest.
-  await queue.add(
-    "health-check",
-    {},
-    {
-      repeat: { every: HEALTH_LOOP_MS, immediately: true },
-    }
-  );
-  await queue.add(
-    "ingest-poll",
-    {},
-    {
-      repeat: { every: INGEST_LOOP_MS, immediately: true },
-    }
-  );
-  await queue.add(
-    "live-events-poll",
-    {},
-    {
-      repeat: { every: LIVE_EVENTS_LOOP_MS, immediately: true },
-    }
-  );
-  await queue.add(
-    "discord-guild-catchup",
-    {},
-    {
-      repeat: { every: DISCORD_CATCHUP_LOOP_MS, immediately: false },
-    }
-  );
-
-  console.log(
-    `[worker] Registered scheduler repeats: ingest every ${INGEST_LOOP_MS / 60_000}m, live events every ${LIVE_EVENTS_LOOP_MS / 1000}s, health every ${HEALTH_LOOP_MS / 60_000}m, discord catch-up every ${DISCORD_CATCHUP_LOOP_MS / 60_000}m`
-  );
-}
-
-async function startSchedulerWorker(): Promise<Worker> {
+async function startSchedulerWorker(): Promise<{
+  worker: Worker;
+  stopRepair: () => void;
+}> {
   await registerRepeatableJobs();
 
   const worker = new Worker(
@@ -304,7 +201,22 @@ async function startSchedulerWorker(): Promise<Worker> {
     console.warn(`[worker] scheduler job stalled: ${jobId}`);
   });
 
-  return worker;
+  const repairTimer = setInterval(() => {
+    void repairStuckSchedulerRepeats().catch((err) => {
+      console.warn(
+        "[worker] Scheduler repeat repair failed:",
+        err instanceof Error ? err.message : err
+      );
+    });
+  }, SCHEDULER_REPAIR_MS);
+  repairTimer.unref?.();
+
+  return {
+    worker,
+    stopRepair: () => {
+      clearInterval(repairTimer);
+    },
+  };
 }
 
 function startJobWorker(queueName: string): Worker {
@@ -365,14 +277,16 @@ async function main(): Promise<void> {
   console.log("[worker] Redis write check OK");
 
   const stopRedisHealthMonitor = startRedisHealthMonitor();
-
+  const stopRepairFns: Array<() => void> = [];
   const workers: Worker[] = [];
 
   if (mode === "scheduler") {
     console.log(
       "[worker] Starting scheduler (ingest, live events, health, discord catch-up)"
     );
-    workers.push(await startSchedulerWorker());
+    const scheduler = await startSchedulerWorker();
+    workers.push(scheduler.worker);
+    stopRepairFns.push(scheduler.stopRepair);
   } else if (mode === "process") {
     console.log(
       `[worker] Starting job processors (ingest + refresh + discord queues)` +
@@ -385,7 +299,9 @@ async function main(): Promise<void> {
     workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
   } else if (mode === "all") {
     console.log("[worker] Starting scheduler + job processors");
-    workers.push(await startSchedulerWorker());
+    const scheduler = await startSchedulerWorker();
+    workers.push(scheduler.worker);
+    stopRepairFns.push(scheduler.stopRepair);
     workers.push(startJobWorker(QUEUE_NAMES.INGEST));
     workers.push(startJobWorker(QUEUE_NAMES.REFRESH));
     workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
@@ -400,6 +316,7 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
+  for (const stop of stopRepairFns) stop();
   stopRedisHealthMonitor();
   console.log("[worker] Closing workers…");
   await Promise.all(workers.map((w) => w.close()));

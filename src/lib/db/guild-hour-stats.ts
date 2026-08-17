@@ -37,6 +37,24 @@ function utcBucket(occurredAt: Date): { utcDate: string; utcHour: number } {
   };
 }
 
+/** Stable unique-key order so concurrent upserts lock index rows the same way. */
+export function comparePlayerRow(
+  a: { guildAlbionId: string; playerAlbionId: string },
+  b: { guildAlbionId: string; playerAlbionId: string }
+): number {
+  return (
+    a.guildAlbionId.localeCompare(b.guildAlbionId) ||
+    a.playerAlbionId.localeCompare(b.playerAlbionId)
+  );
+}
+
+export function compareStatsRow(
+  a: { guildAlbionId: string },
+  b: { guildAlbionId: string }
+): number {
+  return a.guildAlbionId.localeCompare(b.guildAlbionId);
+}
+
 export async function recordGuildHourActivity(
   tx: HourStatsTx,
   input: {
@@ -105,6 +123,8 @@ export async function recordGuildHourActivity(
     }
   }
 
+  playerRows.sort(comparePlayerRow);
+
   const uniqueDelta = new Map<string, number>();
   if (playerRows.length > 0) {
     const inserted = await tx
@@ -130,18 +150,20 @@ export async function recordGuildHourActivity(
     }
   }
 
-  const statsRows = [...buckets.entries()].map(([guildAlbionId, bucket]) => ({
-    region: input.region,
-    guildAlbionId,
-    guildName: bucket.guildName,
-    utcDate,
-    utcHour,
-    contentType: input.contentType,
-    uniquePlayers: uniqueDelta.get(guildAlbionId) ?? 0,
-    kills: bucket.kills,
-    deaths: bucket.deaths,
-    fame: bucket.fame,
-  }));
+  const statsRows = [...buckets.entries()]
+    .map(([guildAlbionId, bucket]) => ({
+      region: input.region,
+      guildAlbionId,
+      guildName: bucket.guildName,
+      utcDate,
+      utcHour,
+      contentType: input.contentType,
+      uniquePlayers: uniqueDelta.get(guildAlbionId) ?? 0,
+      kills: bucket.kills,
+      deaths: bucket.deaths,
+      fame: bucket.fame,
+    }))
+    .sort(compareStatsRow);
 
   await tx
     .insert(schema.guildHourStats)

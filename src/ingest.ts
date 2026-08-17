@@ -33,6 +33,7 @@ import {
 } from "@aotracker/core/battles-constants";
 import { recordGuildHourActivity } from "@aotracker/core/db/guild-hour-stats";
 import { db, schema } from "@aotracker/core/db";
+import { formatPgError, withTxRetry } from "@aotracker/core/db/pg-errors";
 import {
   battleMeetsDetailSyncThreshold,
   BATTLE_BELOW_SYNC_THRESHOLD_ERROR,
@@ -1032,54 +1033,56 @@ export async function upsertKillEventDetail(
     detailSyncedAt: now,
   };
 
-  return db.transaction(async (tx) => {
-    let killEventUuid: string;
+  return withTxRetry(() =>
+    db.transaction(async (tx) => {
+      let killEventUuid: string;
 
-    if (existing) {
-      await tx
-        .delete(schema.killParticipants)
-        .where(eq(schema.killParticipants.eventId, existing.id));
-      await tx
-        .delete(schema.killItems)
-        .where(eq(schema.killItems.eventId, existing.id));
-      await tx
-        .update(schema.killEvents)
-        .set(eventRow)
-        .where(eq(schema.killEvents.id, existing.id));
-      killEventUuid = existing.id;
-    } else {
-      const [killEvent] = await tx
-        .insert(schema.killEvents)
-        .values({
-          eventId: event.EventId,
-          region,
-          ...eventRow,
-        })
-        .onConflictDoNothing({
-          target: [schema.killEvents.eventId, schema.killEvents.region],
-        })
-        .returning({ id: schema.killEvents.id });
+      if (existing) {
+        await tx
+          .delete(schema.killParticipants)
+          .where(eq(schema.killParticipants.eventId, existing.id));
+        await tx
+          .delete(schema.killItems)
+          .where(eq(schema.killItems.eventId, existing.id));
+        await tx
+          .update(schema.killEvents)
+          .set(eventRow)
+          .where(eq(schema.killEvents.id, existing.id));
+        killEventUuid = existing.id;
+      } else {
+        const [killEvent] = await tx
+          .insert(schema.killEvents)
+          .values({
+            eventId: event.EventId,
+            region,
+            ...eventRow,
+          })
+          .onConflictDoNothing({
+            target: [schema.killEvents.eventId, schema.killEvents.region],
+          })
+          .returning({ id: schema.killEvents.id });
 
-      if (!killEvent) return false;
-      killEventUuid = killEvent.id;
-    }
+        if (!killEvent) return false;
+        killEventUuid = killEvent.id;
+      }
 
-    await insertKillEventChildren(tx, killEventUuid, participantRows, allItems);
-    await recordGuildHourActivity(tx, {
-      region,
-      occurredAt: eventRow.occurredAt,
-      contentType,
-      totalVictimKillFame: eventRow.totalVictimKillFame ?? 0,
-      participants: participantRows.map((row) => ({
-        role: row.role,
-        playerAlbionId: row.rawPayload.Id?.trim() || null,
-        guildAlbionId: row.rawPayload.GuildId?.trim() || null,
-        guildName:
-          row.guildName?.trim() || row.rawPayload.GuildName?.trim() || null,
-      })),
-    });
-    return true;
-  });
+      await insertKillEventChildren(tx, killEventUuid, participantRows, allItems);
+      await recordGuildHourActivity(tx, {
+        region,
+        occurredAt: eventRow.occurredAt,
+        contentType,
+        totalVictimKillFame: eventRow.totalVictimKillFame ?? 0,
+        participants: participantRows.map((row) => ({
+          role: row.role,
+          playerAlbionId: row.rawPayload.Id?.trim() || null,
+          guildAlbionId: row.rawPayload.GuildId?.trim() || null,
+          guildName:
+            row.guildName?.trim() || row.rawPayload.GuildName?.trim() || null,
+        })),
+      });
+      return true;
+    })
+  );
 }
 
 export async function ingestEvent(
@@ -1194,7 +1197,7 @@ export async function ingestRegionEventBatch(
           throw err;
         }
         errors += 1;
-        lastError = err instanceof Error ? err.message : String(err);
+        lastError = formatPgError(err);
         console.error(
           `[${logPrefix}] Failed event ${event.EventId} in ${region}:`,
           lastError
