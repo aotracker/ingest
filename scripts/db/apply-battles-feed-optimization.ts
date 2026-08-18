@@ -1,57 +1,13 @@
 /**
  * Battles feed: slim feed_preview column + partial start_time index.
  * Backfills preview JSON from existing payloads so list queries can skip TOAST.
+ * Re-run to rebuild rows whose stored preview has no guild/alliance names.
  * Usage: npm run db:apply-battles-feed-optimization (from ingest/, OVH VM or local)
  */
 import postgres from "postgres";
+import { buildBattlesFeedPreview } from "../../src/lib/db/battles-feed-preview";
 
 const BACKFILL_BATCH = 200;
-
-type NamedStat = { id?: string; name?: string; killFame?: number; kills?: number };
-
-function sortByFame(items: NamedStat[]): NamedStat[] {
-  return [...items].sort(
-    (a, b) => (b.killFame ?? 0) - (a.killFame ?? 0) || (b.kills ?? 0) - (a.kills ?? 0)
-  );
-}
-
-function buildPreview(rawPayload: unknown, detailPayload: unknown) {
-  const limit = 24;
-  const detail =
-    detailPayload && typeof detailPayload === "object"
-      ? (detailPayload as { alliances?: NamedStat[]; guilds?: NamedStat[] })
-      : null;
-
-  let alliances: NamedStat[] = [];
-  let guilds: NamedStat[] = [];
-
-  if (Array.isArray(detail?.alliances) && Array.isArray(detail?.guilds)) {
-    alliances = detail.alliances;
-    guilds = detail.guilds;
-  } else if (rawPayload && typeof rawPayload === "object") {
-    const battle = rawPayload as {
-      alliances?: Record<string, NamedStat>;
-      guilds?: Record<string, NamedStat>;
-    };
-    alliances = battle.alliances ? Object.values(battle.alliances) : [];
-    guilds = battle.guilds ? Object.values(battle.guilds) : [];
-  }
-
-  const sortedAlliances = sortByFame(alliances);
-  const sortedGuilds = sortByFame(guilds);
-  return {
-    alliances: sortedAlliances
-      .slice(0, limit)
-      .map((a) => ({ id: String(a.id ?? ""), name: a.name ?? "" }))
-      .filter((a) => a.id && a.name),
-    guilds: sortedGuilds
-      .slice(0, limit)
-      .map((g) => ({ id: String(g.id ?? ""), name: g.name ?? "" }))
-      .filter((g) => g.id && g.name),
-    allianceCount: sortedAlliances.length,
-    guildCount: sortedGuilds.length,
-  };
-}
 
 async function createIndex(sql: postgres.Sql, statement: string) {
   try {
@@ -78,26 +34,39 @@ async function main() {
     console.log("battles.feed_preview column ready.");
 
     let backfilled = 0;
+    let lastId = "00000000-0000-0000-0000-000000000000";
     for (;;) {
       const rows = await sql<
         { id: string; raw_payload: unknown; detail_payload: unknown }[]
       >`
         SELECT id, raw_payload, detail_payload
         FROM battles
-        WHERE feed_preview IS NULL
+        WHERE id > ${lastId}::uuid
           AND (raw_payload IS NOT NULL OR detail_payload IS NOT NULL)
+          AND (
+            feed_preview IS NULL
+            OR (
+              COALESCE(jsonb_array_length(feed_preview->'alliances'), 0) = 0
+              AND COALESCE(jsonb_array_length(feed_preview->'guilds'), 0) = 0
+            )
+          )
+        ORDER BY id
         LIMIT ${BACKFILL_BATCH}
       `;
       if (rows.length === 0) break;
 
       for (const row of rows) {
-        const preview = buildPreview(row.raw_payload, row.detail_payload);
+        const preview = buildBattlesFeedPreview(
+          row.raw_payload,
+          row.detail_payload
+        );
         await sql`
           UPDATE battles
           SET feed_preview = ${preview as never}
           WHERE id = ${row.id}
         `;
       }
+      lastId = rows[rows.length - 1].id;
       backfilled += rows.length;
       console.log(`feed_preview backfill: ${backfilled} rows`);
     }

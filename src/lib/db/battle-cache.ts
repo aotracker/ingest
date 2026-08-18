@@ -9,110 +9,17 @@ import type {
   AlbionRegion,
 } from "../albion/types";
 import { RETAIN_FULL_DAYS } from "./retention";
-import {
-  BATTLES_FEED_PREVIEW_LIMIT,
-  battleMeetsRecentIngestThreshold,
-} from "../battles-constants";
+import { battleMeetsRecentIngestThreshold } from "../battles-constants";
 import { toBigInt } from "../utils";
 import { db, schema } from "./index";
+import { buildBattlesFeedPreview } from "./battles-feed-preview";
 
-export interface BattlesFeedPreviewParticipant {
-  id: string;
-  name: string;
-}
-
-export interface BattlesFeedPreview {
-  alliances: BattlesFeedPreviewParticipant[];
-  guilds: BattlesFeedPreviewParticipant[];
-  allianceCount: number;
-  guildCount: number;
-}
-
-const EMPTY_FEED_PREVIEW: BattlesFeedPreview = {
-  alliances: [],
-  guilds: [],
-  allianceCount: 0,
-  guildCount: 0,
-};
-
-function sortParticipantsByFame<T extends { killFame: number; kills: number }>(
-  items: T[]
-): T[] {
-  return [...items].sort(
-    (a, b) => b.killFame - a.killFame || b.kills - a.kills
-  );
-}
-
-function previewFromNamedStats(
-  alliances: AlbionBattleAllianceStats[],
-  guilds: AlbionBattleGuildStats[]
-): BattlesFeedPreview {
-  const sortedAlliances = sortParticipantsByFame(alliances);
-  const sortedGuilds = sortParticipantsByFame(guilds);
-  return {
-    alliances: sortedAlliances
-      .slice(0, BATTLES_FEED_PREVIEW_LIMIT)
-      .map((a) => ({ id: String(a.id ?? ""), name: a.name ?? "" }))
-      .filter((a) => a.id && a.name),
-    guilds: sortedGuilds
-      .slice(0, BATTLES_FEED_PREVIEW_LIMIT)
-      .map((g) => ({ id: String(g.id ?? ""), name: g.name ?? "" }))
-      .filter((g) => g.id && g.name),
-    allianceCount: sortedAlliances.length,
-    guildCount: sortedGuilds.length,
-  };
-}
-
-/** Slim list-card payload so the battles feed does not TOAST full JSON. */
-export function buildBattlesFeedPreview(
-  rawPayload: unknown,
-  detailPayload: unknown
-): BattlesFeedPreview {
-  const detail =
-    detailPayload && typeof detailPayload === "object"
-      ? (detailPayload as {
-          alliances?: AlbionBattleAllianceStats[];
-          guilds?: AlbionBattleGuildStats[];
-        })
-      : null;
-
-  if (Array.isArray(detail?.alliances) && Array.isArray(detail?.guilds)) {
-    return previewFromNamedStats(detail.alliances, detail.guilds);
-  }
-
-  if (rawPayload && typeof rawPayload === "object") {
-    const battle = rawPayload as AlbionBattle;
-    const alliances = battle.alliances ? Object.values(battle.alliances) : [];
-    const guilds = battle.guilds ? Object.values(battle.guilds) : [];
-    return previewFromNamedStats(alliances, guilds);
-  }
-
-  return EMPTY_FEED_PREVIEW;
-}
-
-export function parseBattlesFeedPreview(value: unknown): BattlesFeedPreview {
-  if (!value || typeof value !== "object") return EMPTY_FEED_PREVIEW;
-  const raw = value as Partial<BattlesFeedPreview>;
-  const alliances = Array.isArray(raw.alliances)
-    ? raw.alliances.filter(
-        (a): a is BattlesFeedPreviewParticipant =>
-          !!a && typeof a.id === "string" && typeof a.name === "string"
-      )
-    : [];
-  const guilds = Array.isArray(raw.guilds)
-    ? raw.guilds.filter(
-        (g): g is BattlesFeedPreviewParticipant =>
-          !!g && typeof g.id === "string" && typeof g.name === "string"
-      )
-    : [];
-  return {
-    alliances,
-    guilds,
-    allianceCount:
-      typeof raw.allianceCount === "number" ? raw.allianceCount : alliances.length,
-    guildCount: typeof raw.guildCount === "number" ? raw.guildCount : guilds.length,
-  };
-}
+export {
+  buildBattlesFeedPreview,
+  parseBattlesFeedPreview,
+  type BattlesFeedPreview,
+  type BattlesFeedPreviewParticipant,
+} from "./battles-feed-preview";
 
 /** Clear heavy battle JSON older than this many days (stub columns kept). */
 export const BATTLE_DETAIL_EVICT_AFTER_DAYS = RETAIN_FULL_DAYS;
@@ -172,15 +79,20 @@ interface BattleDetailPayload {
   players: AlbionBattlePlayer[];
 }
 
+function battleLookupWhere(region: AlbionRegion, albionBattleId: number) {
+  return and(
+    eq(schema.battles.albionBattleId, albionBattleId),
+    eq(schema.battles.region, region)
+  );
+}
+
 export async function getBattleByAlbionId(
   region: AlbionRegion,
   albionBattleId: number
 ) {
   return db.query.battles.findFirst({
-    where: and(
-      eq(schema.battles.albionBattleId, albionBattleId),
-      eq(schema.battles.region, region)
-    ),
+    where: battleLookupWhere(region, albionBattleId),
+    columns: { eventsPayload: false },
   });
 }
 
@@ -188,7 +100,18 @@ export async function getCachedBattle(
   region: AlbionRegion,
   albionBattleId: number
 ): Promise<AlbionBattle | null> {
-  const row = await getBattleByAlbionId(region, albionBattleId);
+  const row = await db.query.battles.findFirst({
+    where: battleLookupWhere(region, albionBattleId),
+    columns: {
+      albionBattleId: true,
+      startTime: true,
+      endTime: true,
+      totalFame: true,
+      totalKills: true,
+      totalPlayers: true,
+      rawPayload: true,
+    },
+  });
   if (!row) return null;
 
   if (row.rawPayload && typeof row.rawPayload === "object") {
@@ -219,7 +142,14 @@ export async function getCachedBattleDetail(
   region: AlbionRegion,
   albionBattleId: number
 ): Promise<CachedBattleDetail | null> {
-  const row = await getBattleByAlbionId(region, albionBattleId);
+  const row = await db.query.battles.findFirst({
+    where: battleLookupWhere(region, albionBattleId),
+    columns: {
+      detailSyncedAt: true,
+      rawPayload: true,
+      detailPayload: true,
+    },
+  });
   if (!row?.detailSyncedAt || !row.detailPayload || !row.rawPayload) return null;
 
   const detail = row.detailPayload as BattleDetailPayload;
@@ -327,7 +257,10 @@ export async function isBattleDetailSyncUnavailable(
   region: AlbionRegion,
   albionBattleId: number
 ): Promise<boolean> {
-  const row = await getBattleByAlbionId(region, albionBattleId);
+  const row = await db.query.battles.findFirst({
+    where: battleLookupWhere(region, albionBattleId),
+    columns: { detailSyncUnavailable: true },
+  });
   return (row?.detailSyncUnavailable ?? 0) === 1;
 }
 
@@ -555,6 +488,9 @@ export async function isBattleDetailEvicted(
   region: AlbionRegion,
   albionBattleId: number
 ): Promise<boolean> {
-  const row = await getBattleByAlbionId(region, albionBattleId);
+  const row = await db.query.battles.findFirst({
+    where: battleLookupWhere(region, albionBattleId),
+    columns: { detailEvictedAt: true },
+  });
   return row?.detailEvictedAt != null;
 }
