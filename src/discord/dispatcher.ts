@@ -98,6 +98,7 @@ export async function emitKillIngested(
       feedId: feed.id,
       region,
       eventId: event.EventId,
+      occurredAt,
     });
   }
 }

@@ -60,6 +60,7 @@ import {
 } from "@aotracker/core/db/api-state";
 import { toBigInt } from "@aotracker/core/utils";
 import { ensureBattleDetailQueued } from "./jobs/enqueue";
+import { sortEventsOldestFirst } from "./discord/order";
 
 const DEFAULT_EVENT_BATCH_CONCURRENCY = 3;
 
@@ -1089,6 +1090,21 @@ export async function upsertKillEventDetail(
   );
 }
 
+async function emitDiscordForEvent(
+  region: AlbionRegion,
+  event: AlbionEvent
+): Promise<void> {
+  try {
+    const { emitKillIngested } = await import("./discord/dispatcher");
+    await emitKillIngested(region, event);
+  } catch (err) {
+    console.warn(
+      `[discord] emit failed for ${region}/${event.EventId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 export async function ingestEvent(
   region: AlbionRegion,
   event: AlbionEvent,
@@ -1102,15 +1118,7 @@ export async function ingestEvent(
 ): Promise<boolean> {
   const isNew = await upsertKillEventDetail(region, event, options);
   if (isNew && options?.notifyDiscord) {
-    try {
-      const { emitKillIngested } = await import("./discord/dispatcher");
-      await emitKillIngested(region, event);
-    } catch (err) {
-      console.warn(
-        `[discord] emit failed for ${region}/${event.EventId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
+    await emitDiscordForEvent(region, event);
   }
   return isNew;
 }
@@ -1177,6 +1185,7 @@ export async function ingestRegionEventBatch(
   const startedAt = Date.now();
   let done = 0;
   const total = events.length;
+  const newlyIngested: AlbionEvent[] = [];
 
   if (debug) {
     console.log(`[${logPrefix}] ${region} events: processing ${total}`);
@@ -1192,10 +1201,12 @@ export async function ingestRegionEventBatch(
           battleDetailCache,
           entityCache,
           existingByEventId,
-          notifyDiscord,
+          notifyDiscord: false,
         });
-        if (isNew) ingested += 1;
-        else skipped += 1;
+        if (isNew) {
+          ingested += 1;
+          if (notifyDiscord) newlyIngested.push(event);
+        } else skipped += 1;
       } catch (err) {
         if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
           throw err;
@@ -1218,6 +1229,12 @@ export async function ingestRegionEventBatch(
       );
     }
   });
+
+  if (notifyDiscord && newlyIngested.length > 0) {
+    for (const event of sortEventsOldestFirst(newlyIngested)) {
+      await emitDiscordForEvent(region, event);
+    }
+  }
 
   return { ingested, skipped, errors, lastError };
 }

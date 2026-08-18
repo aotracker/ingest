@@ -1,6 +1,8 @@
+import type { AlbionEvent } from "@aotracker/core/albion/types";
 import { isDiscordEnabled } from "./enabled";
 import { listActiveGuildFeedTargets, listPlayerAlbionIdsForGuild } from "./db";
-import { ingestEvent } from "../ingest";
+import { ingestRegionEventBatch } from "../ingest";
+import { sortEventsOldestFirst, uniqueEventsById } from "./order";
 import { fetchPlayerHistoryFromApi } from "@aotracker/core/albion/player-history-api";
 import {
   CircuitOpenError,
@@ -35,20 +37,14 @@ export async function runDiscordGuildCatchup(): Promise<void> {
     ),
   ].slice(0, MEMBERS_PER_GUILD);
 
-  let ingested = 0;
+  const events: AlbionEvent[] = [];
   for (const playerId of batch) {
     try {
       const { kills, deaths } = await fetchPlayerHistoryFromApi(
         target.region,
         playerId
       );
-      for (const event of [...kills, ...deaths]) {
-        const isNew = await ingestEvent(target.region, event, {
-          fetchBattleDetail: false,
-          notifyDiscord: true,
-        });
-        if (isNew) ingested += 1;
-      }
+      events.push(...kills, ...deaths);
     } catch (err) {
       if (isCircuitOpenError(err) || err instanceof CircuitOpenError) {
         console.warn("[discord-catchup] skipped — circuit open");
@@ -60,6 +56,16 @@ export async function runDiscordGuildCatchup(): Promise<void> {
       );
     }
   }
+
+  const { ingested } = await ingestRegionEventBatch(
+    target.region,
+    sortEventsOldestFirst(uniqueEventsById(events)),
+    {
+      fetchBattleDetail: false,
+      notifyDiscord: true,
+      logPrefix: "discord-catchup",
+    }
+  );
 
   if (ingested > 0) {
     console.log(

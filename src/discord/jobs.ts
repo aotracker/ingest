@@ -6,7 +6,9 @@ export async function enqueueNotifyDiscord(input: {
   feedId: string;
   region: AlbionRegion;
   eventId: number;
+  occurredAt: Date;
 }): Promise<void> {
+  const occurredMs = input.occurredAt.getTime();
   await enqueueJob({
     queue: QUEUE_NAMES.DISCORD,
     name: "notify-discord",
@@ -17,5 +19,7 @@ export async function enqueueNotifyDiscord(input: {
       feedId: input.feedId,
     },
     maxAttempts: 5,
+    // Lower BullMQ priority runs sooner; older kills must post first.
+    priority: Number.isFinite(occurredMs) ? occurredMs : undefined,
   });
 }

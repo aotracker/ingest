@@ -41,9 +41,10 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
   const delayMs = input.delayMs ?? 0;
   const payload = input.payload ?? {};
   const priority =
-    payload.userPromoted === true
+    input.priority ??
+    (payload.userPromoted === true
       ? JOB_PRIORITY_PROMOTED
-      : JOB_PRIORITY_DEFAULT;
+      : JOB_PRIORITY_DEFAULT);
 
   const existing = await queue.getJob(input.dedupeKey);
   if (existing) {

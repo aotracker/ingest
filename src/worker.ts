@@ -219,7 +219,7 @@ async function startSchedulerWorker(): Promise<{
   };
 }
 
-function startJobWorker(queueName: string): Worker {
+function startJobWorker(queueName: string, concurrency = 5): Worker {
   const worker = new Worker(
     queueName,
     async (job) => {
@@ -237,7 +237,7 @@ function startJobWorker(queueName: string): Worker {
     },
     {
       connection: createRedisConnection(),
-      concurrency: 5,
+      concurrency,
     }
   );
 
@@ -296,7 +296,8 @@ async function main(): Promise<void> {
     );
     workers.push(startJobWorker(QUEUE_NAMES.INGEST));
     workers.push(startJobWorker(QUEUE_NAMES.REFRESH));
-    workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
+    // Concurrency 1 keeps kill/death posts oldest-to-newest per channel.
+    workers.push(startJobWorker(QUEUE_NAMES.DISCORD, 1));
   } else if (mode === "all") {
     console.log("[worker] Starting scheduler + job processors");
     const scheduler = await startSchedulerWorker();
@@ -304,7 +305,7 @@ async function main(): Promise<void> {
     stopRepairFns.push(scheduler.stopRepair);
     workers.push(startJobWorker(QUEUE_NAMES.INGEST));
     workers.push(startJobWorker(QUEUE_NAMES.REFRESH));
-    workers.push(startJobWorker(QUEUE_NAMES.DISCORD));
+    workers.push(startJobWorker(QUEUE_NAMES.DISCORD, 1));
   } else {
     console.error(
       `Unknown mode "${mode}". Use: process | scheduler | all [--region=americas|europe|asia] [--region-only]`

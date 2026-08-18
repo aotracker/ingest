@@ -42,6 +42,8 @@ export interface EnqueueJobInput {
   payload?: JobPayload;
   delayMs?: number;
   maxAttempts?: number;
+  /** BullMQ: lower number runs sooner. */
+  priority?: number;
 }
 
 /** Maps BullMQ job state to labels used by the status UI. */
