@@ -1029,6 +1029,10 @@ export async function upsertKillEventDetail(
     totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
     participantCount: counts.participantCount,
     groupMemberCount: counts.groupMemberCount,
+    killerGuildAlbionId: event.Killer?.GuildId?.trim() || null,
+    killerGuildName: event.Killer?.GuildName?.trim() || null,
+    killerAllianceAlbionId: event.Killer?.AllianceId?.trim() || null,
+    killerAllianceName: event.Killer?.AllianceName?.trim() || null,
     rawPayload: event,
     detailSyncedAt: now,
   };

@@ -132,6 +132,8 @@ export const battles = pgTable(
     rawPayload: jsonb("raw_payload"),
     eventsPayload: jsonb("events_payload"),
     detailPayload: jsonb("detail_payload"),
+    /** Slim alliance/guild names for the battles list; avoids TOAST on feed reads. */
+    feedPreview: jsonb("feed_preview"),
     detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
     /**
      * When set, heavy JSON was cleared for storage; stub columns remain so a visit
@@ -152,6 +154,11 @@ export const battles = pgTable(
     index("battles_detail_sync_unavailable_idx")
       .on(t.detailSyncUnavailable)
       .where(sql`${t.detailSyncUnavailable} = 1`),
+    index("battles_feed_start_time_idx")
+      .on(t.startTime, t.createdAt)
+      .where(
+        sql`${t.totalFame} is not null and ${t.totalKills} is not null and ${t.totalPlayers} >= 10`
+      ),
   ]
 );
 
@@ -170,6 +177,10 @@ export const killEvents = pgTable(
     totalVictimKillFame: bigint("total_victim_kill_fame", { mode: "number" }),
     participantCount: integer("participant_count"),
     groupMemberCount: integer("group_member_count"),
+    killerGuildAlbionId: text("killer_guild_albion_id"),
+    killerGuildName: text("killer_guild_name"),
+    killerAllianceAlbionId: text("killer_alliance_albion_id"),
+    killerAllianceName: text("killer_alliance_name"),
     rawPayload: jsonb("raw_payload"),
     detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
     /**
@@ -194,6 +205,24 @@ export const killEvents = pgTable(
       .on(t.region, t.albionBattleId)
       .where(sql`${t.albionBattleId} is not null`),
     index("kill_events_detail_evict_idx").on(t.occurredAt, t.detailEvictedAt),
+    index("kill_events_lb_killer_idx")
+      .on(t.occurredAt, t.killerId)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerId} IS NOT NULL`
+      ),
+    index("kill_events_lb_fame_idx")
+      .on(t.totalVictimKillFame, t.occurredAt)
+      .where(sql`${t.totalVictimKillFame} > 0`),
+    index("kill_events_lb_guild_idx")
+      .on(t.occurredAt, t.killerGuildAlbionId, t.region)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerGuildAlbionId} IS NOT NULL`
+      ),
+    index("kill_events_lb_alliance_idx")
+      .on(t.occurredAt, t.killerAllianceAlbionId, t.region)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerAllianceAlbionId} IS NOT NULL`
+      ),
   ]
 );
 

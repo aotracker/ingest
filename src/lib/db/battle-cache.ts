@@ -9,9 +9,110 @@ import type {
   AlbionRegion,
 } from "../albion/types";
 import { RETAIN_FULL_DAYS } from "./retention";
-import { battleMeetsRecentIngestThreshold } from "../battles-constants";
+import {
+  BATTLES_FEED_PREVIEW_LIMIT,
+  battleMeetsRecentIngestThreshold,
+} from "../battles-constants";
 import { toBigInt } from "../utils";
 import { db, schema } from "./index";
+
+export interface BattlesFeedPreviewParticipant {
+  id: string;
+  name: string;
+}
+
+export interface BattlesFeedPreview {
+  alliances: BattlesFeedPreviewParticipant[];
+  guilds: BattlesFeedPreviewParticipant[];
+  allianceCount: number;
+  guildCount: number;
+}
+
+const EMPTY_FEED_PREVIEW: BattlesFeedPreview = {
+  alliances: [],
+  guilds: [],
+  allianceCount: 0,
+  guildCount: 0,
+};
+
+function sortParticipantsByFame<T extends { killFame: number; kills: number }>(
+  items: T[]
+): T[] {
+  return [...items].sort(
+    (a, b) => b.killFame - a.killFame || b.kills - a.kills
+  );
+}
+
+function previewFromNamedStats(
+  alliances: AlbionBattleAllianceStats[],
+  guilds: AlbionBattleGuildStats[]
+): BattlesFeedPreview {
+  const sortedAlliances = sortParticipantsByFame(alliances);
+  const sortedGuilds = sortParticipantsByFame(guilds);
+  return {
+    alliances: sortedAlliances
+      .slice(0, BATTLES_FEED_PREVIEW_LIMIT)
+      .map((a) => ({ id: String(a.id ?? ""), name: a.name ?? "" }))
+      .filter((a) => a.id && a.name),
+    guilds: sortedGuilds
+      .slice(0, BATTLES_FEED_PREVIEW_LIMIT)
+      .map((g) => ({ id: String(g.id ?? ""), name: g.name ?? "" }))
+      .filter((g) => g.id && g.name),
+    allianceCount: sortedAlliances.length,
+    guildCount: sortedGuilds.length,
+  };
+}
+
+/** Slim list-card payload so the battles feed does not TOAST full JSON. */
+export function buildBattlesFeedPreview(
+  rawPayload: unknown,
+  detailPayload: unknown
+): BattlesFeedPreview {
+  const detail =
+    detailPayload && typeof detailPayload === "object"
+      ? (detailPayload as {
+          alliances?: AlbionBattleAllianceStats[];
+          guilds?: AlbionBattleGuildStats[];
+        })
+      : null;
+
+  if (Array.isArray(detail?.alliances) && Array.isArray(detail?.guilds)) {
+    return previewFromNamedStats(detail.alliances, detail.guilds);
+  }
+
+  if (rawPayload && typeof rawPayload === "object") {
+    const battle = rawPayload as AlbionBattle;
+    const alliances = battle.alliances ? Object.values(battle.alliances) : [];
+    const guilds = battle.guilds ? Object.values(battle.guilds) : [];
+    return previewFromNamedStats(alliances, guilds);
+  }
+
+  return EMPTY_FEED_PREVIEW;
+}
+
+export function parseBattlesFeedPreview(value: unknown): BattlesFeedPreview {
+  if (!value || typeof value !== "object") return EMPTY_FEED_PREVIEW;
+  const raw = value as Partial<BattlesFeedPreview>;
+  const alliances = Array.isArray(raw.alliances)
+    ? raw.alliances.filter(
+        (a): a is BattlesFeedPreviewParticipant =>
+          !!a && typeof a.id === "string" && typeof a.name === "string"
+      )
+    : [];
+  const guilds = Array.isArray(raw.guilds)
+    ? raw.guilds.filter(
+        (g): g is BattlesFeedPreviewParticipant =>
+          !!g && typeof g.id === "string" && typeof g.name === "string"
+      )
+    : [];
+  return {
+    alliances,
+    guilds,
+    allianceCount:
+      typeof raw.allianceCount === "number" ? raw.allianceCount : alliances.length,
+    guildCount: typeof raw.guildCount === "number" ? raw.guildCount : guilds.length,
+  };
+}
 
 /** Clear heavy battle JSON older than this many days (stub columns kept). */
 export const BATTLE_DETAIL_EVICT_AFTER_DAYS = RETAIN_FULL_DAYS;
@@ -169,6 +270,11 @@ export async function cacheBattleDetail(
       guilds: data.guilds,
       players: data.players,
     } satisfies BattleDetailPayload as unknown as Record<string, unknown>,
+    feedPreview: buildBattlesFeedPreview(data.battle, {
+      alliances: data.alliances,
+      guilds: data.guilds,
+      players: data.players,
+    }) as unknown as Record<string, unknown>,
     detailSyncedAt: now,
     detailEvictedAt: null,
     lastSyncedAt: now,
@@ -314,6 +420,10 @@ export async function upsertBattleFromRecentList(
         totalFame: totalFame ?? existing.totalFame ?? undefined,
         totalKills: battle.totalKills ?? existing.totalKills,
         totalPlayers: totalPlayers ?? existing.totalPlayers,
+        feedPreview: buildBattlesFeedPreview(
+          hasDetail ? existing.rawPayload ?? battle : battle,
+          hasDetail ? existing.detailPayload : null
+        ) as unknown as Record<string, unknown>,
         ...(hasDetail ? {} : { rawPayload: listPayload }),
         lastSyncedAt: now,
       })
@@ -330,6 +440,10 @@ export async function upsertBattleFromRecentList(
     totalKills: battle.totalKills,
     totalPlayers,
     rawPayload: listPayload,
+    feedPreview: buildBattlesFeedPreview(battle, null) as unknown as Record<
+      string,
+      unknown
+    >,
     lastSyncedAt: now,
   });
 
