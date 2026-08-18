@@ -132,16 +132,14 @@ LIMIT 50`;
     );
     if (hasGuildCol) {
       const guildColSql = `
-SELECT region, killer_guild_albion_id, killer_guild_name,
+SELECT region, killer_guild_albion_id,
+       max(killer_guild_name) AS guild_name,
        SUM(total_victim_kill_fame) AS kill_fame, COUNT(*) AS kill_count
 FROM kill_events
 WHERE total_victim_kill_fame > 0
   AND occurred_at >= now() - interval '7 days'
-  AND region IN (${REGIONS_SQL})
-  AND killer_id IS NOT NULL
   AND killer_guild_albion_id IS NOT NULL
-  AND trim(killer_guild_name) <> ''
-GROUP BY region, killer_guild_albion_id, killer_guild_name
+GROUP BY region, killer_guild_albion_id
 ORDER BY SUM(total_victim_kill_fame) DESC
 LIMIT 50`;
       await runExplain(
@@ -155,7 +153,8 @@ LIMIT 50`;
       );
     }
 
-    const guildJsonSql = `
+    if (process.env.DIAGNOSE_LEGACY_JSONB === "1") {
+      const guildJsonSql = `
 SELECT region,
        raw_payload->'Killer'->>'GuildId' AS guild_id,
        raw_payload->'Killer'->>'GuildName' AS guild_name,
@@ -171,11 +170,16 @@ WHERE total_victim_kill_fame > 0
 GROUP BY 1, 2, 3
 ORDER BY SUM(total_victim_kill_fame) DESC
 LIMIT 50`;
-    await runExplain(
-      sql,
-      "leaderboards guilds via JSONB (legacy / comparison)",
-      guildJsonSql
-    );
+      await runExplain(
+        sql,
+        "leaderboards guilds via JSONB (legacy / comparison)",
+        guildJsonSql
+      );
+    } else {
+      console.log(
+        "\n(skipping JSONB guild EXPLAIN — set DIAGNOSE_LEGACY_JSONB=1 to run)"
+      );
+    }
 
     const hasPreview = await columnExists(sql, "battles", "feed_preview");
     const battlesSelect = hasPreview
