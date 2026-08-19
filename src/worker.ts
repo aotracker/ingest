@@ -247,7 +247,7 @@ function startJobWorker(queueName: string, concurrency = 5): Worker {
       void recordWorkerRunError(
         "process-jobs",
         err instanceof Error ? err.message : String(err)
-      );
+      ).catch(() => undefined);
       void recordOpsEvent({
         source: "job",
         severity: "error",

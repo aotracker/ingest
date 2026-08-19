@@ -13,6 +13,7 @@ import {
 } from "@aotracker/core/db/battle-cache";
 import {
   BATTLE_DETAIL_SYNC_DELAY_MS,
+  clampBullmqPriority,
   JOB_PRIORITY_DEFAULT,
   JOB_PRIORITY_PROMOTED,
   MAX_USER_PROMOTE_REMAINING_MS,
@@ -40,11 +41,12 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<void> {
   const queue = queueForJobQueue(input.queue);
   const delayMs = input.delayMs ?? 0;
   const payload = input.payload ?? {};
-  const priority =
+  const priority = clampBullmqPriority(
     input.priority ??
-    (payload.userPromoted === true
-      ? JOB_PRIORITY_PROMOTED
-      : JOB_PRIORITY_DEFAULT);
+      (payload.userPromoted === true
+        ? JOB_PRIORITY_PROMOTED
+        : JOB_PRIORITY_DEFAULT)
+  );
 
   const existing = await queue.getJob(input.dedupeKey);
   if (existing) {

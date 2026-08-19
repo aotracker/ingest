@@ -1126,6 +1126,8 @@ export async function ingestEvent(
 export type IngestRegionEventBatchOptions = {
   fetchBattleDetail?: boolean;
   notifyDiscord?: boolean;
+  /** Also Discord-notify already-ingested events (catch-up retries unposted claims). */
+  notifyExisting?: boolean;
   battleDetailCache?: Map<number, IngestBattleStats>;
   entityCache?: IngestEntityCache;
   concurrency?: number;
@@ -1175,6 +1177,7 @@ export async function ingestRegionEventBatch(
   const concurrency = options?.concurrency ?? DEFAULT_EVENT_BATCH_CONCURRENCY;
   const logPrefix = options?.logPrefix ?? "ingest";
   const notifyDiscord = options?.notifyDiscord === true;
+  const notifyExisting = options?.notifyExisting === true;
   const fetchBattleDetail = options?.fetchBattleDetail;
   const debug = process.env.INGEST_DEBUG === "1";
 
@@ -1186,6 +1189,7 @@ export async function ingestRegionEventBatch(
   let done = 0;
   const total = events.length;
   const newlyIngested: AlbionEvent[] = [];
+  const existingForNotify: AlbionEvent[] = [];
 
   if (debug) {
     console.log(`[${logPrefix}] ${region} events: processing ${total}`);
@@ -1194,6 +1198,7 @@ export async function ingestRegionEventBatch(
   await mapPool(events, concurrency, async (event) => {
     if (existingByEventId.get(event.EventId)?.detailSyncedAt) {
       skipped += 1;
+      if (notifyDiscord && notifyExisting) existingForNotify.push(event);
     } else {
       try {
         const isNew = await ingestEvent(region, event, {
@@ -1230,8 +1235,12 @@ export async function ingestRegionEventBatch(
     }
   });
 
-  if (notifyDiscord && newlyIngested.length > 0) {
-    for (const event of sortEventsOldestFirst(newlyIngested)) {
+  if (notifyDiscord) {
+    const toNotify = sortEventsOldestFirst([
+      ...newlyIngested,
+      ...existingForNotify,
+    ]);
+    for (const event of toNotify) {
       await emitDiscordForEvent(region, event);
     }
   }

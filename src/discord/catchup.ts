@@ -63,6 +63,7 @@ export async function runDiscordGuildCatchup(): Promise<void> {
     {
       fetchBattleDetail: false,
       notifyDiscord: true,
+      notifyExisting: true,
       logPrefix: "discord-catchup",
     }
   );

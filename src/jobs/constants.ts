@@ -76,3 +76,15 @@ export const BATTLE_DETAIL_SYNC_DELAY_MS = 5_000;
 /** User-promoted jobs get higher priority (lower number = sooner). */
 export const JOB_PRIORITY_DEFAULT = 10;
 export const JOB_PRIORITY_PROMOTED = 1;
+
+/** BullMQ rejects priorities outside 0..2^21-1. */
+export const BULLMQ_PRIORITY_MIN = 0;
+export const BULLMQ_PRIORITY_MAX = 2_097_151;
+
+export function clampBullmqPriority(priority: number): number {
+  if (!Number.isFinite(priority)) return JOB_PRIORITY_DEFAULT;
+  return Math.min(
+    BULLMQ_PRIORITY_MAX,
+    Math.max(BULLMQ_PRIORITY_MIN, Math.round(priority))
+  );
+}

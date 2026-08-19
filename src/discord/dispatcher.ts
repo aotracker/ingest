@@ -2,8 +2,10 @@ import type { AlbionEvent, AlbionRegion } from "@aotracker/core/albion/types";
 import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
 import { isDiscordEnabled } from "./enabled";
 import {
+  clearPostClaim,
   feedFilters,
   findMatchingFeedsForKill,
+  hasPostedMessage,
   tryClaimPost,
   type DiscordFeedRow,
 } from "./db";
@@ -92,13 +94,17 @@ export async function emitKillIngested(
   for (const feed of matches) {
     if (!feed.channelId) continue;
     if (!passesFilters(feed, fame, occurredAt, contentType)) continue;
+    if (await hasPostedMessage(feed.id, eventKey)) continue;
     const claimed = await tryClaimPost(feed.id, eventKey);
-    if (!claimed) continue;
-    await enqueueNotifyDiscord({
-      feedId: feed.id,
-      region,
-      eventId: event.EventId,
-      occurredAt,
-    });
+    try {
+      await enqueueNotifyDiscord({
+        feedId: feed.id,
+        region,
+        eventId: event.EventId,
+      });
+    } catch (err) {
+      if (claimed) await clearPostClaim(feed.id, eventKey);
+      throw err;
+    }
   }
 }
