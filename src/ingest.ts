@@ -1034,6 +1034,8 @@ export async function upsertKillEventDetail(
     killerGuildName: event.Killer?.GuildName?.trim() || null,
     killerAllianceAlbionId: event.Killer?.AllianceId?.trim() || null,
     killerAllianceName: event.Killer?.AllianceName?.trim() || null,
+    victimGuildAlbionId: event.Victim?.GuildId?.trim() || null,
+    victimGuildName: event.Victim?.GuildName?.trim() || null,
     rawPayload: event,
     detailSyncedAt: now,
   };

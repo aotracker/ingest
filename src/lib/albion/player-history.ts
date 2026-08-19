@@ -123,21 +123,26 @@ export function allianceTagAtKillFromRef(
   return tag || null;
 }
 
-/** Prefer guild from kill payload, then participant row, then player's current guild. */
+/**
+ * Guild at kill time only: payload, then denormalized event columns, then
+ * participant row. Never falls back to the player's current guild.
+ */
 export function resolveGuildAtKill(
   ref: AlbionPlayerRef | undefined,
   participantGuildName?: string | null,
-  currentGuild?: { name: string; albionId: string } | null
+  eventGuild?: { name?: string | null; albionId?: string | null } | null
 ): { name: string; albionId?: string } | null {
   const fromPayload = guildAtKillFromRef(ref);
   if (fromPayload) return fromPayload;
 
+  const eventName = eventGuild?.name?.trim();
+  if (eventName) {
+    const albionId = eventGuild?.albionId?.trim();
+    return albionId ? { name: eventName, albionId } : { name: eventName };
+  }
+
   const name = participantGuildName?.trim();
   if (name) return { name };
-
-  if (currentGuild) {
-    return { name: currentGuild.name, albionId: currentGuild.albionId };
-  }
 
   return null;
 }

@@ -181,6 +181,8 @@ export const killEvents = pgTable(
     killerGuildName: text("killer_guild_name"),
     killerAllianceAlbionId: text("killer_alliance_albion_id"),
     killerAllianceName: text("killer_alliance_name"),
+    victimGuildAlbionId: text("victim_guild_albion_id"),
+    victimGuildName: text("victim_guild_name"),
     rawPayload: jsonb("raw_payload"),
     detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
     /**

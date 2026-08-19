@@ -152,6 +152,7 @@ Or run individual scripts:
 | `npm run db:apply-guild-hour-stats` | Guild UTC-hour activity tables |
 | `npm run db:apply-discord-bot` | Discord servers, feeds, and post-log tables |
 | `npm run db:apply-kill-detail-eviction` | Kill `detail_evicted_at` + nullable `raw_payload`; drop unused `background_jobs` |
+| `npm run db:apply-kill-victim-guild-columns` | Kill `victim_guild_name` / `victim_guild_albion_id` + backfill |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
 
