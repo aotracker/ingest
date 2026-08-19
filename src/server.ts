@@ -1,4 +1,9 @@
-import express, { type Request, type Response, type NextFunction } from "express";
+import express, {
+  type ErrorRequestHandler,
+  type Request,
+  type Response,
+  type NextFunction,
+} from "express";
 import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { isRegionEnabled } from "@aotracker/core/albion/types";
 import {
@@ -84,6 +89,40 @@ function parseRegions(value: unknown): AlbionRegion[] | null {
     return regions.length > 0 ? regions : null;
   }
   return null;
+}
+
+/** Express 5 types query/param values as `string | string[]`. */
+function firstString(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && typeof value[0] === "string") return value[0];
+  return undefined;
+}
+
+function httpErrorStatus(err: unknown): number {
+  if (typeof err === "object" && err !== null && "status" in err) {
+    const status = (err as { status: unknown }).status;
+    if (typeof status === "number" && status >= 400 && status < 600) {
+      return status;
+    }
+  }
+  if (typeof err === "object" && err !== null && "statusCode" in err) {
+    const status = (err as { statusCode: unknown }).statusCode;
+    if (typeof status === "number" && status >= 400 && status < 600) {
+      return status;
+    }
+  }
+  return 500;
+}
+
+function handleListenError(err: NodeJS.ErrnoException): void {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `[ingest-api] Port ${PORT} is already in use. Stop the other ingest API or set INGEST_API_PORT.`
+    );
+  } else {
+    console.error("[ingest-api] Failed to start:", err);
+  }
+  process.exit(1);
 }
 
 const app = express();
@@ -187,9 +226,9 @@ app.post("/jobs/live-search", async (req, res) => {
 });
 
 app.get("/jobs/live-search/state", async (req, res) => {
-  const query = req.query.q ?? req.query.query;
+  const query = firstString(req.query.q) ?? firstString(req.query.query);
   const regions = parseRegions(req.query.regions);
-  if (typeof query !== "string" || !query.trim()) {
+  if (!query?.trim()) {
     res.status(400).json({ error: "q is required" });
     return;
   }
@@ -224,8 +263,8 @@ app.post("/jobs/scheduler/health-check", async (_req, res) => {
 });
 
 app.get("/jobs/battle-sync/:region/:battleId", async (req, res) => {
-  const region = parseRegion(req.params.region);
-  const battleId = parseInt(req.params.battleId, 10);
+  const region = parseRegion(firstString(req.params.region));
+  const battleId = parseInt(firstString(req.params.battleId) ?? "", 10);
   if (!region || Number.isNaN(battleId)) {
     res.status(400).json({ error: "Invalid region or battleId" });
     return;
@@ -235,8 +274,8 @@ app.get("/jobs/battle-sync/:region/:battleId", async (req, res) => {
 });
 
 app.get("/jobs/player-sync/:region/:playerId/state", async (req, res) => {
-  const region = parseRegion(req.params.region);
-  const playerId = req.params.playerId;
+  const region = parseRegion(firstString(req.params.region));
+  const playerId = firstString(req.params.playerId);
   if (!region || !playerId) {
     res.status(400).json({ error: "Invalid region or playerId" });
     return;
@@ -246,8 +285,8 @@ app.get("/jobs/player-sync/:region/:playerId/state", async (req, res) => {
 });
 
 app.get("/jobs/guild-sync/:region/:guildId/state", async (req, res) => {
-  const region = parseRegion(req.params.region);
-  const guildId = req.params.guildId;
+  const region = parseRegion(firstString(req.params.region));
+  const guildId = firstString(req.params.guildId);
   if (!region || !guildId) {
     res.status(400).json({ error: "Invalid region or guildId" });
     return;
@@ -257,8 +296,8 @@ app.get("/jobs/guild-sync/:region/:guildId/state", async (req, res) => {
 });
 
 app.get("/jobs/alliance-refresh/:region/:allianceId/state", async (req, res) => {
-  const region = parseRegion(req.params.region);
-  const allianceId = req.params.allianceId;
+  const region = parseRegion(firstString(req.params.region));
+  const allianceId = firstString(req.params.allianceId);
   if (!region || !allianceId) {
     res.status(400).json({ error: "Invalid region or allianceId" });
     return;
@@ -270,9 +309,9 @@ app.get("/jobs/alliance-refresh/:region/:allianceId/state", async (req, res) => 
 app.get(
   "/jobs/entity-resolve/:region/:type/:name/state",
   async (req, res) => {
-    const region = parseRegion(req.params.region);
-    const entityType = parseEntityType(req.params.type);
-    const name = decodeURIComponent(req.params.name ?? "");
+    const region = parseRegion(firstString(req.params.region));
+    const entityType = parseEntityType(firstString(req.params.type));
+    const name = decodeURIComponent(firstString(req.params.name) ?? "");
     if (!region || !entityType || !name.trim()) {
       res.status(400).json({ error: "Invalid region, type, or name" });
       return;
@@ -304,24 +343,35 @@ app.get("/system", async (_req, res) => {
   });
 });
 
+const jsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+  const status = httpErrorStatus(err);
+  if (status >= 500) {
+    console.error("[ingest-api]", err);
+  }
+  res.status(status).json({
+    error: status >= 500 ? "Internal server error" : "Bad request",
+  });
+};
+
+app.use(jsonErrorHandler);
+
 async function start(): Promise<void> {
   await assertRedisWritable();
   const stopRedisHealthMonitor = startRedisHealthMonitor();
-  const server = app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", (error?: Error) => {
+    if (error) {
+      handleListenError(error);
+      return;
+    }
     console.log(`[ingest-api] Listening on 0.0.0.0:${PORT}`);
     process.send?.("ready");
   });
 
-  server.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE") {
-      console.error(
-        `[ingest-api] Port ${PORT} is already in use. Stop the other ingest API or set INGEST_API_PORT.`
-      );
-    } else {
-      console.error("[ingest-api] Failed to start:", err);
-    }
-    process.exit(1);
-  });
+  server.on("error", handleListenError);
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
