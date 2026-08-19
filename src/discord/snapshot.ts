@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { itemIconCdnBase } from "./enabled";
 import {
@@ -18,7 +21,6 @@ import {
 import { estimateItemsSilver } from "./silver";
 
 const S = 1.6;
-const T = 2.2;
 const TF = 2.0;
 function u(n: number): number {
   return Math.round(n * S);
@@ -27,49 +29,131 @@ function tx(n: number): number {
   return Math.round(n * TF);
 }
 
-const ICON = Math.round(60 * T);
-const GAP = Math.round(8 * T);
-const CELL = ICON + GAP;
-const COL_WIDTH = CELL * 2 + ICON;
-const WIDTH = u(1200);
-const PAD = u(36);
-const MID_GAP = u(14);
-const FAME_W = u(280);
-const SIDE_W = (WIDTH - PAD * 2 - FAME_W - MID_GAP * 2) / 2;
-const SUMMARY_Y = u(72);
-const SUMMARY_H = u(200);
-const GEAR_GAP = u(20);
-const GEAR_CARD_W = (WIDTH - PAD * 2 - GEAR_GAP) / 2;
-const GEAR_CARD_Y = SUMMARY_Y + SUMMARY_H + u(16);
-const GEAR_HEADER = u(128);
-const GEAR_GRID_H = CELL * 3 + ICON;
-const GEAR_CARD_H = GEAR_HEADER + GEAR_GRID_H + u(28);
-const GEAR_Y = GEAR_CARD_Y + GEAR_HEADER;
-const BOTTOM_Y = GEAR_CARD_Y + GEAR_CARD_H + u(16);
-const LOOT_H = u(72) + ICON + u(32);
-const HEIGHT = BOTTOM_Y + LOOT_H + PAD;
+const ASSETS_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "assets"
+);
 
-/** Same paper-doll order as the kill page (`KillGearPanels` / `gear.png`). */
-const SLOT_GRID: { slot: string; col: number; row: number }[] = [
-  { slot: "Bag", col: 0, row: 0 },
-  { slot: "Head", col: 1, row: 0 },
-  { slot: "Cape", col: 2, row: 0 },
-  { slot: "MainHand", col: 0, row: 1 },
-  { slot: "Armor", col: 1, row: 1 },
-  { slot: "OffHand", col: 2, row: 1 },
-  { slot: "Food", col: 0, row: 2 },
-  { slot: "Shoes", col: 1, row: 2 },
-  { slot: "Potion", col: 2, row: 2 },
-  { slot: "Mount", col: 1, row: 3 },
+const COLOR = {
+  bg: "#080c14",
+  card: "#0c121c",
+  border: "#1e2a38",
+  fg: "#e8edf2",
+  muted: "#7d8b9a",
+  kill: "#3dd68c",
+  death: "#e85d5d",
+  fame: "#f5c14a",
+  ip: "#38bdf8",
+} as const;
+
+const CONTENT_BADGE: Record<string, { fill: string; stroke: string; text: string }> = {
+  ZVZ: { fill: "#3f1515", stroke: "#7f1d1d", text: "#fca5a5" },
+  SOLO: { fill: "#172554", stroke: "#1e3a8a", text: "#93c5fd" },
+  GROUP: { fill: "#422006", stroke: "#92400e", text: "#fcd34d" },
+};
+
+/** Same overlay map as `KillGearPanels` on `public/gear.png` (480×520). */
+const SLOT_POSITIONS: { slot: string; left: number; top: number }[] = [
+  { slot: "Bag", left: 0.051, top: 0.0567 },
+  { slot: "Head", left: 0.3698, top: 0.0837 },
+  { slot: "Cape", left: 0.6927, top: 0.0567 },
+  { slot: "MainHand", left: 0.1063, top: 0.2933 },
+  { slot: "Armor", left: 0.3698, top: 0.2933 },
+  { slot: "OffHand", left: 0.6438, top: 0.2933 },
+  { slot: "Food", left: 0.0615, top: 0.5394 },
+  { slot: "Shoes", left: 0.3698, top: 0.5144 },
+  { slot: "Potion", left: 0.6885, top: 0.5394 },
+  { slot: "Mount", left: 0.3698, top: 0.726 },
 ];
+const SLOT_SIZE = { width: 0.25, height: 0.2308 };
+
+const KILLBOARD = {
+  fame: 0,
+  skull: 9,
+  silver: 10,
+} as const;
+const KILLBOARD_FRAMES = 14;
+
+const WIDTH = u(1200);
+const PAD = u(28);
+const CARD_X = PAD;
+const CARD_W = WIDTH - PAD * 2;
+const CENTER_W = u(210);
+const SIDE_W = (CARD_W - CENTER_W) / 2;
+const HEADER_Y = u(48);
+const CARD_Y = u(68);
+const COL_PAD = u(18);
+const PLAYER_HEAD_H = u(118);
+const GEAR_W = Math.min(u(320), Math.round(SIDE_W - COL_PAD * 2));
+const GEAR_H = Math.round((GEAR_W * 520) / 480);
+const SLOT_PX = Math.round(GEAR_W * SLOT_SIZE.width);
+const CARD_H = PLAYER_HEAD_H + GEAR_H + u(28);
+const LOOT_GAP = u(16);
+const LOOT_ICON = Math.round(56 * 1.8);
+const LOOT_CELL = LOOT_ICON + u(10);
 
 const iconCache = new Map<string, Buffer | null>();
+let gearTemplate: Buffer | null | undefined;
+let killboardSprite: Buffer | null | undefined;
 
-async function fetchIcon(item: KillSnapshotItem): Promise<Buffer | null> {
-  const key = itemIconCacheKey(item.itemType, item.quality);
+type Overlay = {
+  input: Buffer;
+  left: number;
+  top: number;
+};
+
+async function readAsset(name: string): Promise<Buffer | null> {
+  try {
+    return await readFile(path.join(ASSETS_DIR, name));
+  } catch {
+    return null;
+  }
+}
+
+async function loadGearTemplate(): Promise<Buffer | null> {
+  if (gearTemplate !== undefined) return gearTemplate;
+  const file = await readAsset("gear.png");
+  gearTemplate = file
+    ? await sharp(file).resize(GEAR_W, GEAR_H).png().toBuffer()
+    : null;
+  return gearTemplate;
+}
+
+async function loadKillboardSprite(): Promise<Buffer | null> {
+  if (killboardSprite !== undefined) return killboardSprite;
+  killboardSprite = await readAsset("killboard-icons.png");
+  return killboardSprite;
+}
+
+async function killboardIcon(
+  name: keyof typeof KILLBOARD,
+  size: number
+): Promise<Buffer | null> {
+  const sprite = await loadKillboardSprite();
+  if (!sprite) return null;
+  const meta = await sharp(sprite).metadata();
+  const frameW = Math.round((meta.width ?? 1540) / KILLBOARD_FRAMES);
+  const frameH = meta.height ?? 100;
+  const index = KILLBOARD[name];
+  try {
+    return await sharp(sprite)
+      .extract({ left: index * frameW, top: 0, width: frameW, height: frameH })
+      .resize(size, size)
+      .png()
+      .toBuffer();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIcon(
+  item: KillSnapshotItem,
+  size: number
+): Promise<Buffer | null> {
+  const key = `${itemIconCacheKey(item.itemType, item.quality)}@${size}`;
   if (iconCache.has(key)) return iconCache.get(key) ?? null;
 
-  const url = `${itemIconCdnBase()}/${key}.png`;
+  const url = `${itemIconCdnBase()}/${itemIconCacheKey(item.itemType, item.quality)}.png`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) {
@@ -77,7 +161,10 @@ async function fetchIcon(item: KillSnapshotItem): Promise<Buffer | null> {
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
-    const resized = await sharp(buf).resize(ICON, ICON).png().toBuffer();
+    const resized = await sharp(buf)
+      .resize(size, size, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
     iconCache.set(key, resized);
     return resized;
   } catch {
@@ -119,136 +206,238 @@ function svgText(
 }
 
 function playerGuildLine(player: KillSnapshotParticipant | null): string {
-  const guild = player?.guildName?.trim() || "No guild";
-  const tag = player?.allianceTag?.trim();
-  return tag ? `${guild}  <${tag}>` : guild;
+  return player?.guildName?.trim() || "";
 }
 
-type Overlay = {
-  input: Buffer;
-  left: number;
-  top: number;
-};
+function contentKind(type: string): "ZVZ" | "SOLO" | "GROUP" {
+  if (type === "ZVZ" || type === "SOLO") return type;
+  return "GROUP";
+}
 
-async function compositeColumn(
+function estimateTextWidth(text: string, size: number): number {
+  return Math.ceil(text.length * size * 0.62);
+}
+
+async function compositePaperDoll(
   items: KillSnapshotItem[],
   originX: number,
   originY: number
 ): Promise<Overlay[]> {
   const overlays: Overlay[] = [];
-  for (const cell of SLOT_GRID) {
+  const template = await loadGearTemplate();
+  if (template) {
+    overlays.push({ input: template, left: originX, top: originY });
+  }
+  for (const cell of SLOT_POSITIONS) {
     const item = slotItem(items, cell.slot);
     if (!item) continue;
-    const icon = await fetchIcon(item);
+    const icon = await fetchIcon(item, SLOT_PX);
     if (!icon) continue;
     overlays.push({
       input: icon,
-      left: Math.round(originX + cell.col * CELL),
-      top: Math.round(originY + cell.row * CELL),
+      left: Math.round(originX + GEAR_W * cell.left),
+      top: Math.round(originY + GEAR_H * cell.top),
     });
   }
   return overlays;
-}
-
-function gearSlotFrames(originX: number, originY: number): string {
-  return SLOT_GRID.map((cell) => {
-    const x = originX + cell.col * CELL;
-    const y = originY + cell.row * CELL;
-    return `<rect x="${x}" y="${y}" width="${ICON}" height="${ICON}" rx="${u(10)}" fill="#0c0f14" stroke="#2a3441"/>`;
-  }).join("");
 }
 
 async function compositeInventory(
   items: KillSnapshotItem[],
   originX: number,
   originY: number,
-  max = 12
+  maxCols: number
 ): Promise<Overlay[]> {
   const overlays: Overlay[] = [];
-  const shown = items.slice(0, max);
-  for (let i = 0; i < shown.length; i++) {
-    const icon = await fetchIcon(shown[i]!);
+  for (let i = 0; i < items.length; i++) {
+    const icon = await fetchIcon(items[i]!, LOOT_ICON);
     if (!icon) continue;
+    const col = i % maxCols;
+    const row = Math.floor(i / maxCols);
     overlays.push({
       input: icon,
-      left: Math.round(originX + i * (ICON + u(4))),
-      top: Math.round(originY),
+      left: Math.round(originX + col * LOOT_CELL),
+      top: Math.round(originY + row * LOOT_CELL),
     });
   }
   return overlays;
 }
 
-function playerSummary(options: {
+const SILVER_ICON = u(16);
+
+function silverValueLayout(options: {
+  silver: string;
+  fontSize: number;
+  iconSize: number;
+}): { width: number; iconGap: number } {
+  const iconGap = u(4);
+  const textW = estimateTextWidth(options.silver, options.fontSize);
+  return {
+    width: options.silver ? options.iconSize + iconGap + textW : 0,
+    iconGap,
+  };
+}
+
+function playerColumn(options: {
   x: number;
-  width: number;
   role: string;
   accent: string;
   player: KillSnapshotParticipant | null;
-}): string {
-  const { x, width, role, accent, player } = options;
-  const cx = x + width / 2;
-  const name = truncate(player?.name?.trim() || "Unknown", 20);
-  const guild = truncate(playerGuildLine(player), 28);
-  const ip = formatItemPower(player?.averageItemPower);
-  const y = SUMMARY_Y;
+  ip: string;
+  silver: string;
+}): { svg: string; silverIcon: { x: number; y: number } | null } {
+  const { x, role, accent, player, ip, silver } = options;
+  const cx = x + SIDE_W / 2;
+  const y = CARD_Y;
+  const name = truncate(player?.name?.trim() || "Unknown", 22);
+  const guild = truncate(playerGuildLine(player), 32);
+  const ipText = ip !== "—" ? `${ip} IP` : "";
+  const statsY = y + u(108);
+  const fontSize = tx(14);
+  const ipW = ipText ? estimateTextWidth(ipText, fontSize) : 0;
+  const silverLayout = silverValueLayout({
+    silver,
+    fontSize,
+    iconSize: SILVER_ICON,
+  });
+  const gap = ipText && silver ? u(14) : 0;
+  const totalW = ipW + gap + silverLayout.width;
+  let cursor = cx - totalW / 2;
+  let statsSvg = "";
+  let silverIcon: { x: number; y: number } | null = null;
 
-  return `
-    <rect x="${x}" y="${y}" width="${width}" height="${SUMMARY_H}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
-    ${svgText(role, cx, y + u(38), tx(13), accent, 'text-anchor="middle" font-weight="700" letter-spacing="2.8"')}
-    ${svgText(name, cx, y + u(78), tx(26), "#e8edf2", 'text-anchor="middle" font-weight="700"')}
-    ${svgText(guild, cx, y + u(112), tx(16), "#7d8b9a", 'text-anchor="middle" font-weight="500"')}
-    ${svgText(`${ip} IP`, cx, y + u(150), tx(18), "#38bdf8", 'text-anchor="middle" font-weight="600"')}
-  `;
+  if (ipText) {
+    statsSvg += svgText(
+      ipText,
+      cursor,
+      statsY,
+      fontSize,
+      COLOR.ip,
+      'font-weight="600"'
+    );
+    cursor += ipW + gap;
+  }
+  if (silver) {
+    silverIcon = { x: cursor, y: statsY - SILVER_ICON + u(3) };
+    cursor += SILVER_ICON + silverLayout.iconGap;
+    statsSvg += svgText(
+      silver,
+      cursor,
+      statsY,
+      fontSize,
+      COLOR.muted,
+      'font-weight="500"'
+    );
+  }
+
+  return {
+    svg: `
+    ${svgText(role, cx, y + u(28), tx(12), accent, 'text-anchor="middle" font-weight="700" letter-spacing="1.8"')}
+    ${svgText(name, cx, y + u(58), tx(22), COLOR.fg, 'text-anchor="middle" font-weight="700"')}
+    ${guild ? svgText(guild, cx, y + u(82), tx(14), COLOR.muted, 'text-anchor="middle" font-weight="500"') : ""}
+    ${statsSvg}
+  `,
+    silverIcon,
+  };
 }
 
-function fameSummary(options: {
+function matchMeta(options: {
   x: number;
   fame: string;
   content: string;
+  contentType: string;
   region: string;
   when: string;
+  assists: string | null;
 }): string {
-  const { x, fame, content, region, when } = options;
-  const cx = x + FAME_W / 2;
-  const y = SUMMARY_Y;
-  const inset = u(20);
-  const clipW = FAME_W - inset * 2;
-  const clipId = "fame-card-clip";
+  const { x, fame, content, contentType, region, when, assists } = options;
+  const cx = x + CENTER_W / 2;
+  const y = CARD_Y;
+  const kind = contentKind(contentType);
+  const badge = CONTENT_BADGE[kind] ?? CONTENT_BADGE.GROUP;
+  const badgeLabel = content;
+  const badgeW = Math.max(u(64), estimateTextWidth(badgeLabel, tx(12)) + u(18));
+  const badgeH = u(22);
+  const badgeX = cx - badgeW / 2;
+  const fameBlockY = y + Math.round(CARD_H * 0.42);
+  const badgeY = fameBlockY + u(72);
 
   return `
-    <defs>
-      <clipPath id="${clipId}">
-        <rect x="${x + inset}" y="${y}" width="${clipW}" height="${SUMMARY_H}" rx="${u(8)}"/>
-      </clipPath>
-    </defs>
-    <rect x="${x}" y="${y}" width="${FAME_W}" height="${SUMMARY_H}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
-    <g clip-path="url(#${clipId})">
-      ${svgText("KILL FAME", cx, y + u(32), tx(13), "#f5c14a", 'text-anchor="middle" font-weight="700" letter-spacing="2.8"')}
-      ${svgText(fame, cx, y + u(82), tx(40), "#f5c14a", 'text-anchor="middle" font-weight="700"')}
-      ${svgText(content, cx, y + u(116), tx(16), "#d7e0ea", 'text-anchor="middle" font-weight="600"')}
-      ${svgText(region, cx, y + u(148), tx(13), "#9aa7b5", 'text-anchor="middle" font-weight="600"')}
-      ${svgText(when, cx, y + u(172), tx(12), "#7d8b9a", 'text-anchor="middle" font-weight="500"')}
-    </g>
+    <line x1="${x}" y1="${CARD_Y + u(12)}" x2="${x}" y2="${CARD_Y + CARD_H - u(12)}" stroke="${COLOR.border}"/>
+    <line x1="${x + CENTER_W}" y1="${CARD_Y + u(12)}" x2="${x + CENTER_W}" y2="${CARD_Y + CARD_H - u(12)}" stroke="${COLOR.border}"/>
+    ${svgText("KILLED", cx, y + u(42), tx(13), COLOR.fg, 'text-anchor="middle" font-weight="700" letter-spacing="3.2"')}
+    ${svgText(when, cx, y + u(68), tx(12), COLOR.muted, 'text-anchor="middle" font-weight="500"')}
+    ${svgText("KILL FAME", cx, fameBlockY + u(12), tx(11), COLOR.muted, 'text-anchor="middle" font-weight="700" letter-spacing="1.6"')}
+    ${svgText(fame, cx, fameBlockY + u(52), tx(32), COLOR.fame, 'text-anchor="middle" font-weight="700"')}
+    <rect x="${badgeX}" y="${badgeY}" width="${badgeW}" height="${badgeH}" rx="${u(5)}" fill="${badge.fill}" stroke="${badge.stroke}"/>
+    ${svgText(badgeLabel, cx, badgeY + u(16), tx(12), badge.text, 'text-anchor="middle" font-weight="600"')}
+    ${svgText(region, cx, badgeY + u(44), tx(12), COLOR.muted, 'text-anchor="middle" font-weight="500"')}
+    ${assists ? svgText(assists, cx, badgeY + u(66), tx(12), COLOR.muted, 'text-anchor="middle" font-weight="500"') : ""}
   `;
 }
 
-function gearCard(options: {
-  x: number;
-  title: string;
-  accent: string;
-  ip: string;
-  silver: string;
-}): string {
-  const { x, title, accent, ip, silver } = options;
-  const y = GEAR_CARD_Y;
+function gearSlotFrames(originX: number, originY: number): string {
+  return SLOT_POSITIONS.map((cell) => {
+    const x = originX + GEAR_W * cell.left;
+    const y = originY + GEAR_H * cell.top;
+    return `<rect x="${x}" y="${y}" width="${SLOT_PX}" height="${SLOT_PX}" rx="${u(8)}" fill="#080c14" stroke="${COLOR.border}"/>`;
+  }).join("");
+}
 
-  return `
-    <rect x="${x}" y="${y}" width="${GEAR_CARD_W}" height="${GEAR_CARD_H}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
-    ${svgText(title, x + u(24), y + u(42), tx(18), accent, 'font-weight="700"')}
-    ${svgText(silver, x + GEAR_CARD_W - u(24), y + u(42), tx(16), "#9aa7b5", 'text-anchor="end" font-weight="500"')}
-    ${svgText("Average IP", x + u(24), y + u(78), tx(16), "#7d8b9a", 'font-weight="500"')}
-    ${svgText(ip, x + u(168), y + u(78), tx(16), "#38bdf8", 'font-weight="600"')}
-  `;
+function lootCard(options: {
+  y: number;
+  height: number;
+  count: number;
+  silver: string;
+  iconsX: number;
+  iconsY: number;
+  maxCols: number;
+}): { svg: string; silverIcon: { x: number; y: number } | null } {
+  const { y, height, count, silver, iconsX, iconsY, maxCols } = options;
+  const itemsLabel = count === 1 ? "1 item" : `${count} items`;
+  const fontSize = tx(13);
+  const headerY = y + u(36);
+  const rightEdge = CARD_X + CARD_W - u(22);
+  const itemsW = estimateTextWidth(itemsLabel, fontSize);
+  const itemsX = rightEdge - itemsW;
+  const silverLayout = silverValueLayout({
+    silver,
+    fontSize,
+    iconSize: SILVER_ICON,
+  });
+  const silverBlockX = silver
+    ? itemsX - u(14) - silverLayout.width
+    : null;
+  let silverIcon: { x: number; y: number } | null = null;
+  let silverSvg = "";
+  if (silver && silverBlockX != null) {
+    silverIcon = { x: silverBlockX, y: headerY - SILVER_ICON + u(3) };
+    silverSvg = svgText(
+      silver,
+      silverBlockX + SILVER_ICON + silverLayout.iconGap,
+      headerY,
+      fontSize,
+      COLOR.muted,
+      'font-weight="500"'
+    );
+  }
+  const frames = Array.from({ length: count }, (_, i) => {
+    const col = i % maxCols;
+    const row = Math.floor(i / maxCols);
+    const x = iconsX + col * LOOT_CELL;
+    const frameY = iconsY + row * LOOT_CELL;
+    return `<rect x="${x}" y="${frameY}" width="${LOOT_ICON}" height="${LOOT_ICON}" rx="${u(6)}" fill="#10151d" stroke="${COLOR.border}"/>`;
+  }).join("");
+  return {
+    svg: `
+    <rect x="${CARD_X}" y="${y}" width="${CARD_W}" height="${height}" rx="${u(12)}" fill="${COLOR.card}" stroke="${COLOR.border}"/>
+    ${svgText("Victim loot", CARD_X + u(22), headerY, tx(16), COLOR.fg, 'font-weight="700"')}
+    ${silverSvg}
+    ${svgText(itemsLabel, itemsX, headerY, fontSize, COLOR.muted, 'font-weight="500"')}
+    ${frames}
+  `,
+    silverIcon,
+  };
 }
 
 export async function renderKillSnapshotPng(
@@ -258,9 +447,10 @@ export async function renderKillSnapshotPng(
   const victimGear = itemsFor(snapshot, "victim", "equipment");
   const loot = itemsFor(snapshot, "victim", "inventory");
 
-  const [killerSilver, victimLost] = await Promise.all([
+  const [killerSilver, victimSilver, lootSilver] = await Promise.all([
     estimateItemsSilver(snapshot.region, killerGear),
-    estimateItemsSilver(snapshot.region, [...victimGear, ...loot]),
+    estimateItemsSilver(snapshot.region, victimGear),
+    estimateItemsSilver(snapshot.region, loot),
   ]);
 
   const fame = formatFame(snapshot.totalVictimKillFame ?? 0);
@@ -271,76 +461,131 @@ export async function renderKillSnapshotPng(
         ? "1 assist"
         : `${snapshot.assistCount} assists`
       : null;
-  const contentLine = [content, assists].filter(Boolean).join(" · ");
   const when = formatUtcStampShort(snapshot.occurredAt);
   const region = regionLabel(snapshot.region);
 
-  const killerX = PAD;
-  const fameX = PAD + SIDE_W + MID_GAP;
-  const victimX = fameX + FAME_W + MID_GAP;
-  const killerGearX = PAD;
-  const victimGearX = PAD + GEAR_CARD_W + GEAR_GAP;
-  const gearOffsetX = (GEAR_CARD_W - COL_WIDTH) / 2;
-  const lootX = PAD + u(24);
-  const lootY = BOTTOM_Y + u(72);
+  const killerColX = CARD_X;
+  const centerX = CARD_X + SIDE_W;
+  const victimColX = centerX + CENTER_W;
+  const killerGearX = Math.round(killerColX + (SIDE_W - GEAR_W) / 2);
+  const victimGearX = Math.round(victimColX + (SIDE_W - GEAR_W) / 2);
+  const gearY = CARD_Y + PLAYER_HEAD_H;
+
+  const showLoot = loot.length > 0;
+  const lootMaxCols = Math.max(
+    1,
+    Math.floor((CARD_W - u(44)) / LOOT_CELL)
+  );
+  const lootRows = showLoot ? Math.ceil(loot.length / lootMaxCols) : 0;
+  const lootY = CARD_Y + CARD_H + LOOT_GAP;
+  const lootH = showLoot ? u(56) + lootRows * LOOT_CELL + u(20) : 0;
+  const lootIconsY = lootY + u(56);
+  const lootIconsX = CARD_X + u(22);
+  const HEIGHT = lootY + (showLoot ? lootH : 0) + PAD;
+
+  const iconSize = u(22);
+  const fameBlockY = CARD_Y + Math.round(CARD_H * 0.42);
+  const hasGearArt = Boolean(await loadGearTemplate());
+  const killerCol = playerColumn({
+    x: killerColX,
+    role: "KILLER",
+    accent: COLOR.kill,
+    player: snapshot.killer,
+    ip: formatItemPower(snapshot.killer?.averageItemPower),
+    silver: killerSilver > 0 ? formatSilver(killerSilver) : "",
+  });
+  const victimCol = playerColumn({
+    x: victimColX,
+    role: "VICTIM",
+    accent: COLOR.death,
+    player: snapshot.victim,
+    ip: formatItemPower(snapshot.victim?.averageItemPower),
+    silver: victimSilver > 0 ? formatSilver(victimSilver) : "",
+  });
+  const lootPanel = showLoot
+    ? lootCard({
+        y: lootY,
+        height: lootH,
+        count: loot.length,
+        silver: lootSilver > 0 ? formatSilver(lootSilver) : "",
+        iconsX: lootIconsX,
+        iconsY: lootIconsY,
+        maxCols: lootMaxCols,
+      })
+    : null;
+  const needSilverIcon = Boolean(
+    killerCol.silverIcon || victimCol.silverIcon || lootPanel?.silverIcon
+  );
+  const [skull, fameIcon, silverIcon] = await Promise.all([
+    killboardIcon("skull", iconSize),
+    killboardIcon("fame", iconSize),
+    needSilverIcon ? killboardIcon("silver", SILVER_ICON) : Promise.resolve(null),
+  ]);
 
   const svg = Buffer.from(`
     <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-      <rect width="100%" height="100%" fill="#0c0f14"/>
-      ${svgText("aotracker.net", PAD, u(48), tx(24), "#e8edf2", 'font-weight="700"')}
-      ${playerSummary({
-        x: killerX,
-        width: SIDE_W,
-        role: "KILLER",
-        accent: "#3dd68c",
-        player: snapshot.killer,
-      })}
-      ${fameSummary({
-        x: fameX,
+      <rect width="100%" height="100%" fill="${COLOR.bg}"/>
+      ${svgText("aotracker.net", PAD, HEADER_Y, tx(18), COLOR.fg, 'font-weight="700"')}
+      <rect x="${CARD_X}" y="${CARD_Y}" width="${CARD_W}" height="${CARD_H}" rx="${u(12)}" fill="${COLOR.card}" stroke="${COLOR.border}"/>
+      ${hasGearArt ? "" : `${gearSlotFrames(killerGearX, gearY)}${gearSlotFrames(victimGearX, gearY)}`}
+      ${killerCol.svg}
+      ${matchMeta({
+        x: centerX,
         fame,
-        content: contentLine,
+        content,
+        contentType: snapshot.contentType,
         region,
         when,
+        assists,
       })}
-      ${playerSummary({
-        x: victimX,
-        width: SIDE_W,
-        role: "VICTIM",
-        accent: "#e85d5d",
-        player: snapshot.victim,
-      })}
-      ${gearCard({
-        x: killerGearX,
-        title: "Killer's Equipment",
-        accent: "#3dd68c",
-        ip: formatItemPower(snapshot.killer?.averageItemPower),
-        silver: `Est. value  ${formatSilver(killerSilver)}`,
-      })}
-      ${gearCard({
-        x: victimGearX,
-        title: "Victim's Equipment",
-        accent: "#e85d5d",
-        ip: formatItemPower(snapshot.victim?.averageItemPower),
-        silver: `Est. value  ${formatSilver(victimLost)}`,
-      })}
-      ${gearSlotFrames(killerGearX + gearOffsetX, GEAR_Y)}
-      ${gearSlotFrames(victimGearX + gearOffsetX, GEAR_Y)}
-      <rect x="${PAD}" y="${BOTTOM_Y}" width="${WIDTH - PAD * 2}" height="${HEIGHT - BOTTOM_Y - PAD}" rx="${u(16)}" fill="#12171e" stroke="#2a3441"/>
-      ${svgText("LOOT", PAD + u(24), BOTTOM_Y + u(40), tx(15), "#9aa7b5", 'font-weight="700" letter-spacing="2.8"')}
-      ${
-        loot.length === 0
-          ? svgText("None", PAD + u(24), BOTTOM_Y + u(96), tx(18), "#5f6b78", 'font-weight="500"')
-          : ""
-      }
+      ${victimCol.svg}
+      ${lootPanel?.svg ?? ""}
     </svg>
   `);
 
   const base = await sharp(svg).png().toBuffer();
   const overlays: Overlay[] = [
-    ...(await compositeColumn(killerGear, killerGearX + gearOffsetX, GEAR_Y)),
-    ...(await compositeColumn(victimGear, victimGearX + gearOffsetX, GEAR_Y)),
-    ...(await compositeInventory(loot, lootX, lootY)),
+    ...(await compositePaperDoll(killerGear, killerGearX, gearY)),
+    ...(await compositePaperDoll(victimGear, victimGearX, gearY)),
   ];
+
+  if (showLoot) {
+    overlays.push(
+      ...(await compositeInventory(loot, lootIconsX, lootIconsY, lootMaxCols))
+    );
+  }
+
+  const cx = centerX + CENTER_W / 2;
+  if (skull) {
+    overlays.push({
+      input: skull,
+      left: Math.round(
+        cx - estimateTextWidth("KILLED", tx(13)) / 2 - iconSize - u(8)
+      ),
+      top: CARD_Y + u(22),
+    });
+  }
+  if (fameIcon) {
+    overlays.push({
+      input: fameIcon,
+      left: Math.round(cx - iconSize / 2),
+      top: fameBlockY - u(28),
+    });
+  }
+  if (silverIcon) {
+    for (const pos of [
+      killerCol.silverIcon,
+      victimCol.silverIcon,
+      lootPanel?.silverIcon ?? null,
+    ]) {
+      if (!pos) continue;
+      overlays.push({
+        input: silverIcon,
+        left: Math.round(pos.x),
+        top: Math.round(pos.y),
+      });
+    }
+  }
 
   return sharp(base).composite(overlays).png().toBuffer();
 }
