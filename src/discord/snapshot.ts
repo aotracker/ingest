@@ -21,7 +21,7 @@ import {
 import { estimateItemsSilver } from "./silver";
 
 const S = 1.6;
-const TF = 2.0;
+const TF = 1.7;
 function u(n: number): number {
   return Math.round(n * S);
 }
