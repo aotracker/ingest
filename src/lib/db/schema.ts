@@ -183,6 +183,8 @@ export const killEvents = pgTable(
     killerAllianceName: text("killer_alliance_name"),
     victimGuildAlbionId: text("victim_guild_albion_id"),
     victimGuildName: text("victim_guild_name"),
+    victimAllianceAlbionId: text("victim_alliance_albion_id"),
+    victimAllianceName: text("victim_alliance_name"),
     rawPayload: jsonb("raw_payload"),
     detailSyncedAt: timestamp("detail_synced_at", { withTimezone: true }),
     /**
@@ -224,6 +226,36 @@ export const killEvents = pgTable(
       .on(t.occurredAt, t.killerAllianceAlbionId, t.region)
       .where(
         sql`${t.totalVictimKillFame} > 0 AND ${t.killerAllianceAlbionId} IS NOT NULL`
+      ),
+    index("kill_events_feud_guild_idx")
+      .on(
+        t.region,
+        t.killerGuildAlbionId,
+        t.victimGuildAlbionId,
+        t.occurredAt
+      )
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerGuildAlbionId} IS NOT NULL AND ${t.victimGuildAlbionId} IS NOT NULL`
+      ),
+    index("kill_events_feud_alliance_idx")
+      .on(
+        t.region,
+        t.killerAllianceAlbionId,
+        t.victimAllianceAlbionId,
+        t.occurredAt
+      )
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerAllianceAlbionId} IS NOT NULL AND ${t.victimAllianceAlbionId} IS NOT NULL`
+      ),
+    index("kill_events_rivals_killer_guild_idx")
+      .on(t.region, t.killerGuildAlbionId, t.occurredAt)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.killerGuildAlbionId} IS NOT NULL`
+      ),
+    index("kill_events_rivals_victim_guild_idx")
+      .on(t.region, t.victimGuildAlbionId, t.occurredAt)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.victimGuildAlbionId} IS NOT NULL`
       ),
   ]
 );

@@ -211,6 +211,100 @@ WHERE region IN (${REGIONS_SQL})
   AND total_players >= 10`;
     await runExplain(sql, "battles feed COUNT(*)", battlesCountSql);
 
+    const hasVictimAlliance = await columnExists(
+      sql,
+      "kill_events",
+      "victim_alliance_albion_id"
+    );
+    const hasFeudGuildIdx = await sql`
+      SELECT 1
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = 'kill_events_feud_guild_idx'
+      LIMIT 1
+    `;
+
+    if (hasFeudGuildIdx.length > 0) {
+      const feudPair = await sql<
+        {
+          region: string;
+          killer_guild_albion_id: string;
+          victim_guild_albion_id: string;
+        }[]
+      >`
+        SELECT region, killer_guild_albion_id, victim_guild_albion_id
+        FROM kill_events
+        WHERE total_victim_kill_fame > 0
+          AND killer_guild_albion_id IS NOT NULL
+          AND victim_guild_albion_id IS NOT NULL
+          AND killer_guild_albion_id <> victim_guild_albion_id
+        ORDER BY occurred_at DESC
+        LIMIT 1
+      `;
+      const pair = feudPair[0];
+      if (pair) {
+        const guildFeudListSql = `
+SELECT id
+FROM kill_events
+WHERE region = '${pair.region}'
+  AND total_victim_kill_fame > 0
+  AND (
+    (killer_guild_albion_id = '${pair.killer_guild_albion_id}' AND victim_guild_albion_id = '${pair.victim_guild_albion_id}')
+    OR
+    (killer_guild_albion_id = '${pair.victim_guild_albion_id}' AND victim_guild_albion_id = '${pair.killer_guild_albion_id}')
+  )
+ORDER BY occurred_at DESC
+LIMIT 10`;
+        await runExplain(sql, "guild feud list (denormalized columns)", guildFeudListSql);
+
+        const guildFeudStatsSql = `
+SELECT count(*), sum(total_victim_kill_fame)
+FROM kill_events
+WHERE region = '${pair.region}'
+  AND total_victim_kill_fame > 0
+  AND killer_guild_albion_id = '${pair.killer_guild_albion_id}'
+  AND victim_guild_albion_id = '${pair.victim_guild_albion_id}'`;
+        await runExplain(sql, "guild feud stats A kills B", guildFeudStatsSql);
+      }
+    } else {
+      console.log("\n(skipping guild feud EXPLAIN — run npm run db:apply-kill-feud-idx first)");
+    }
+
+    if (hasVictimAlliance) {
+      const alliancePair = await sql<
+        { region: string; killer_alliance_albion_id: string; victim_alliance_albion_id: string }[]
+      >`
+        SELECT region, killer_alliance_albion_id, victim_alliance_albion_id
+        FROM kill_events
+        WHERE total_victim_kill_fame > 0
+          AND killer_alliance_albion_id IS NOT NULL
+          AND victim_alliance_albion_id IS NOT NULL
+          AND killer_alliance_albion_id <> victim_alliance_albion_id
+        ORDER BY occurred_at DESC
+        LIMIT 1
+      `;
+      const ap = alliancePair[0];
+      if (ap) {
+        const allianceFeudSql = `
+SELECT id
+FROM kill_events
+WHERE region = '${ap.region}'
+  AND total_victim_kill_fame > 0
+  AND (
+    (killer_alliance_albion_id = '${ap.killer_alliance_albion_id}' AND victim_alliance_albion_id = '${ap.victim_alliance_albion_id}')
+    OR
+    (killer_alliance_albion_id = '${ap.victim_alliance_albion_id}' AND victim_alliance_albion_id = '${ap.killer_alliance_albion_id}')
+  )
+ORDER BY occurred_at DESC
+LIMIT 10`;
+        await runExplain(sql, "alliance feud list (denormalized columns)", allianceFeudSql);
+      }
+    } else {
+      console.log(
+        "\n(skipping alliance feud EXPLAIN — run npm run db:apply-kill-victim-alliance-columns first)"
+      );
+    }
+
     banner("pg_stat_statements");
     const ext = await sql`
       SELECT extversion
