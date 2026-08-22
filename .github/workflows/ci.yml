@@ -1,8 +1,9 @@
 name: CI
 
-# Disabled while CI is failing. Restore push/PR triggers to re-enable.
 on:
-  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
 
 jobs:
   check:
