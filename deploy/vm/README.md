@@ -154,7 +154,7 @@ Or run individual scripts:
 | `npm run db:apply-kill-detail-eviction` | Kill `detail_evicted_at` + nullable `raw_payload`; drop unused `background_jobs` |
 | `npm run db:apply-kill-victim-guild-columns` | Kill `victim_guild_name` / `victim_guild_albion_id` + backfill |
 | `npm run db:apply-kill-participant-columns` | Participant `guild_albion_id` / alliance cols; drop unused `kill_items.participant_id` FK |
-| `npm run db:backfill-kill-storage` | Optional: null redundant participant JSONB, slim event payloads (`--dry-run` first) |
+| `npm run db:backfill-kill-storage` | Optional: copy participant guild/alliance cols, null redundant JSONB, slim event payloads. `--dry-run` first. Resume with `--phase=null-payload` or `--phase=slim-events` |
 
 Uses `DATABASE_URL` from `/home/ubuntu/ingest/.env` (localhost Postgres). Safe to re-run — all statements are idempotent.
 
