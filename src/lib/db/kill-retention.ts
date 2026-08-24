@@ -1,4 +1,4 @@
-import { and, inArray, isNull, lt } from "drizzle-orm";
+import { and, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   KILL_STUB_TTL_DAYS,
   RETAIN_FULL_DAYS,
@@ -6,7 +6,42 @@ import {
 } from "./retention";
 import { db, schema } from "./index";
 
-const EVICT_CHUNK_SIZE = 200;
+function resolveEvictChunkSize(): number {
+  const configured = process.env.RETAIN_EVICT_CHUNK_SIZE;
+  if (configured !== undefined && configured !== "") {
+    const parsed = parseInt(configured, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 25;
+}
+
+function resolveCompactBatchLimit(): number {
+  const configured = process.env.RETAIN_COMPACT_BATCH_LIMIT;
+  if (configured !== undefined && configured !== "") {
+    const parsed = parseInt(configured, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 500;
+}
+
+const EVICT_CHUNK_SIZE = resolveEvictChunkSize();
+const DEFAULT_COMPACT_BATCH_LIMIT = resolveCompactBatchLimit();
+
+export async function countKillsNeedingCompaction(
+  olderThanDays: number = RETAIN_FULL_DAYS
+): Promise<number> {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(schema.killEvents)
+    .where(
+      and(
+        isNull(schema.killEvents.detailEvictedAt),
+        lt(schema.killEvents.occurredAt, cutoff)
+      )
+    );
+  return row?.count ?? 0;
+}
 
 export async function evictStaleKillDetails(options?: {
   olderThanDays?: number;
@@ -14,10 +49,12 @@ export async function evictStaleKillDetails(options?: {
   dryRun?: boolean;
 }): Promise<{ candidates: number; compacted: number }> {
   const olderThanDays = options?.olderThanDays ?? RETAIN_FULL_DAYS;
-  const limit = options?.limit ?? 2_000;
+  const limit = options?.limit ?? DEFAULT_COMPACT_BATCH_LIMIT;
   const dryRun = options?.dryRun === true;
   const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
   const now = new Date();
+
+  await db.execute(sql`SET statement_timeout TO 0`);
 
   const rows = await db
     .select({ id: schema.killEvents.id })
@@ -42,19 +79,21 @@ export async function evictStaleKillDetails(options?: {
   let compacted = 0;
   for (let i = 0; i < ids.length; i += EVICT_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + EVICT_CHUNK_SIZE);
-    await db
-      .delete(schema.killItems)
-      .where(inArray(schema.killItems.eventId, chunk));
-    await db
-      .delete(schema.killParticipants)
-      .where(inArray(schema.killParticipants.eventId, chunk));
-    await db
-      .update(schema.killEvents)
-      .set({
-        rawPayload: null,
-        detailEvictedAt: now,
-      })
-      .where(inArray(schema.killEvents.id, chunk));
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(schema.killItems)
+        .where(inArray(schema.killItems.eventId, chunk));
+      await tx
+        .delete(schema.killParticipants)
+        .where(inArray(schema.killParticipants.eventId, chunk));
+      await tx
+        .update(schema.killEvents)
+        .set({
+          rawPayload: null,
+          detailEvictedAt: now,
+        })
+        .where(inArray(schema.killEvents.id, chunk));
+    });
     compacted += chunk.length;
   }
 
@@ -67,12 +106,14 @@ export async function deleteExpiredKillStubs(options?: {
   dryRun?: boolean;
 }): Promise<{ candidates: number; deleted: number }> {
   const stubTtlDays = options?.stubTtlDays ?? KILL_STUB_TTL_DAYS;
-  const limit = options?.limit ?? 2_000;
+  const limit = options?.limit ?? DEFAULT_COMPACT_BATCH_LIMIT;
   const dryRun = options?.dryRun === true;
   const cutoff =
     options?.stubTtlDays != null
       ? new Date(Date.now() - stubTtlDays * 24 * 60 * 60 * 1000)
       : killStubTtlCutoff();
+
+  await db.execute(sql`SET statement_timeout TO 0`);
 
   const rows = await db
     .select({ id: schema.killEvents.id })

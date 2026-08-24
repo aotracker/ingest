@@ -358,18 +358,20 @@ export async function findLatestKillForFeeds(
 
   const killer = alias(schema.killParticipants, "discord_replay_killer");
   const victim = alias(schema.killParticipants, "discord_replay_victim");
+  const killerGuildId = sql`COALESCE(${killer.guildAlbionId}, ${killer.rawPayload}->>'GuildId')`;
+  const victimGuildId = sql`COALESCE(${victim.guildAlbionId}, ${victim.rawPayload}->>'GuildId')`;
   const match = or(
     ...feeds.map((feed) => {
       if (feed.feedType === FEED_GUILD_KILLS) {
         return and(
           eq(schema.killEvents.region, feed.region),
-          sql`${killer.rawPayload}->>'GuildId' = ${feed.targetAlbionId}`,
-          sql`${killer.rawPayload}->>'GuildId' IS DISTINCT FROM ${victim.rawPayload}->>'GuildId'`
+          sql`${killerGuildId} = ${feed.targetAlbionId}`,
+          sql`${killerGuildId} IS DISTINCT FROM ${victimGuildId}`
         );
       }
       return and(
         eq(schema.killEvents.region, feed.region),
-        sql`${victim.rawPayload}->>'GuildId' = ${feed.targetAlbionId}`
+        sql`${victimGuildId} = ${feed.targetAlbionId}`
       );
     })
   );

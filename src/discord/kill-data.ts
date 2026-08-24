@@ -46,6 +46,24 @@ function guildIdFromPayload(raw: unknown): string | null {
   return typeof id === "string" && id.trim() ? id.trim() : null;
 }
 
+function participantAllianceTag(
+  row: {
+    allianceTag: string | null;
+    rawPayload: unknown;
+  }
+): string | null {
+  return row.allianceTag?.trim() || allianceTagFromPayload(row.rawPayload);
+}
+
+function participantGuildAlbionId(
+  row: {
+    guildAlbionId: string | null;
+    rawPayload: unknown;
+  }
+): string | null {
+  return row.guildAlbionId?.trim() || guildIdFromPayload(row.rawPayload);
+}
+
 export async function loadKillSnapshot(
   region: AlbionRegion,
   eventId: number
@@ -69,8 +87,8 @@ export async function loadKillSnapshot(
     name: row.name,
     guildName: row.guildName,
     averageItemPower: row.averageItemPower,
-    allianceTag: allianceTagFromPayload(row.rawPayload),
-    guildAlbionId: guildIdFromPayload(row.rawPayload),
+    allianceTag: participantAllianceTag(row),
+    guildAlbionId: participantGuildAlbionId(row),
   });
 
   const killerRow = event.participants.find((p) => p.role === "killer");

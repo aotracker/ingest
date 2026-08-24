@@ -33,6 +33,7 @@ import {
 } from "@aotracker/core/battles-constants";
 import { recordGuildHourActivity } from "@aotracker/core/db/guild-hour-stats";
 import { db, schema } from "@aotracker/core/db";
+import { slimKillEventPayload } from "@aotracker/core/albion/slim-kill-event";
 import { formatPgError, withTxRetry } from "@aotracker/core/db/pg-errors";
 import {
   battleMeetsDetailSyncThreshold,
@@ -772,14 +773,17 @@ function collectKillEventRelations(event: AlbionEvent): {
 
 type KillParticipantRow = {
   playerId: string | null;
+  playerAlbionId: string | null;
   role: KillEventParticipantInsert["role"];
   name: string | null;
   guildName: string | null;
+  guildAlbionId: string | null;
+  allianceId: string | null;
+  allianceTag: string | null;
   averageItemPower: string | null;
   killFame: number | null;
   deathFame: number | null;
   supportHealingDone: number | null;
-  rawPayload: AlbionPlayerRef;
 };
 
 async function resolveKillParticipantRows(
@@ -801,14 +805,17 @@ async function resolveKillParticipantRows(
     if (role === "victim") victimId = playerId;
     rows.push({
       playerId,
+      playerAlbionId: ref.Id?.trim() || null,
       role,
       name: ref.Name ?? null,
       guildName: ref.GuildName ?? null,
+      guildAlbionId: ref.GuildId?.trim() || null,
+      allianceId: ref.AllianceId?.trim() || null,
+      allianceTag: ref.AllianceTag?.trim() || null,
       averageItemPower: ref.AverageItemPower?.toString() ?? null,
       killFame: toBigInt(ref.KillFame),
       deathFame: toBigInt(ref.DeathFame),
       supportHealingDone: toBigInt(ref.SupportHealingDone),
-      rawPayload: ref,
     });
   }
 
@@ -829,11 +836,14 @@ async function insertKillEventChildren(
         role: row.role,
         name: row.name,
         guildName: row.guildName,
+        guildAlbionId: row.guildAlbionId,
+        allianceId: row.allianceId,
+        allianceTag: row.allianceTag,
         averageItemPower: row.averageItemPower,
         killFame: row.killFame,
         deathFame: row.deathFame,
         supportHealingDone: row.supportHealingDone,
-        rawPayload: row.rawPayload,
+        rawPayload: null,
       }))
     );
   }
@@ -1038,7 +1048,7 @@ export async function upsertKillEventDetail(
     victimGuildName: event.Victim?.GuildName?.trim() || null,
     victimAllianceAlbionId: event.Victim?.AllianceId?.trim() || null,
     victimAllianceName: event.Victim?.AllianceName?.trim() || null,
-    rawPayload: event,
+    rawPayload: slimKillEventPayload(event),
     detailSyncedAt: now,
   };
 
@@ -1083,10 +1093,9 @@ export async function upsertKillEventDetail(
         totalVictimKillFame: eventRow.totalVictimKillFame ?? 0,
         participants: participantRows.map((row) => ({
           role: row.role,
-          playerAlbionId: row.rawPayload.Id?.trim() || null,
-          guildAlbionId: row.rawPayload.GuildId?.trim() || null,
-          guildName:
-            row.guildName?.trim() || row.rawPayload.GuildName?.trim() || null,
+          playerAlbionId: row.playerAlbionId,
+          guildAlbionId: row.guildAlbionId,
+          guildName: row.guildName?.trim() || null,
         })),
       });
       return true;

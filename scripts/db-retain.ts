@@ -8,6 +8,7 @@ import {
 } from "@aotracker/core/db/battle-cache";
 import { purgeExpiredGuildHourStats } from "@aotracker/core/db/guild-hour-stats";
 import {
+  countKillsNeedingCompaction,
   deleteExpiredKillStubs,
   evictStaleKillDetails,
 } from "@aotracker/core/db/kill-retention";
@@ -16,7 +17,7 @@ import {
   RETAIN_FULL_DAYS,
 } from "@aotracker/core/db/retention";
 
-const BATCH_LIMIT = 2_000;
+const BATTLE_BATCH_LIMIT = 2_000;
 
 function parseDays(flag: string, fallback: number): number {
   const arg = process.argv.find((a) => a.startsWith(`${flag}=`));
@@ -24,15 +25,32 @@ function parseDays(flag: string, fallback: number): number {
   return Math.max(1, parseInt(arg.slice(flag.length + 1), 10) || fallback);
 }
 
+function parseBatchLimit(): number {
+  const arg = process.argv.find((a) => a.startsWith("--batch="));
+  if (!arg) {
+    const configured = process.env.RETAIN_COMPACT_BATCH_LIMIT;
+    if (configured) {
+      const parsed = parseInt(configured, 10);
+      if (!Number.isNaN(parsed) && parsed > 0) return parsed;
+    }
+    return 500;
+  }
+  return Math.max(1, parseInt(arg.slice("--batch=".length), 10) || 500);
+}
+
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const olderThanDays = parseDays("--days", RETAIN_FULL_DAYS);
   const stubTtlDays = parseDays("--stub-ttl-days", KILL_STUB_TTL_DAYS);
+  const killBatchLimit = parseBatchLimit();
   const prefix = "[db-retain]";
 
   console.log(
-    `${prefix} Starting${dryRun ? " (dry-run)" : ""} — full retain ${olderThanDays}d, stub TTL ${stubTtlDays}d`
+    `${prefix} Starting${dryRun ? " (dry-run)" : ""} — full retain ${olderThanDays}d, stub TTL ${stubTtlDays}d, kill batch ${killBatchLimit}`
   );
+
+  const needCompactStart = await countKillsNeedingCompaction(olderThanDays);
+  console.log(`${prefix} Kills needing compaction: ${needCompactStart}`);
 
   const protectedKeys = await loadTopFameProtectedBattleKeysForEviction();
   console.log(
@@ -48,7 +66,7 @@ async function main() {
     const { candidates, skippedProtected, evicted } =
       await evictStaleBattleDetails({
         olderThanDays,
-        limit: BATCH_LIMIT,
+        limit: BATTLE_BATCH_LIMIT,
         dryRun,
         protectedKeys,
       });
@@ -60,7 +78,7 @@ async function main() {
     );
     if (candidates === 0) break;
     if (dryRun) break;
-    if (candidates < BATCH_LIMIT) break;
+    if (candidates < BATTLE_BATCH_LIMIT) break;
   }
 
   let killCandidates = 0;
@@ -70,17 +88,20 @@ async function main() {
     killBatch += 1;
     const { candidates, compacted } = await evictStaleKillDetails({
       olderThanDays,
-      limit: BATCH_LIMIT,
+      limit: killBatchLimit,
       dryRun,
     });
     killCandidates += candidates;
     killCompacted += compacted;
+    const needCompact = dryRun
+      ? needCompactStart
+      : await countKillsNeedingCompaction(olderThanDays);
     console.log(
-      `${prefix} Kills compact batch ${killBatch}: candidates=${candidates} compacted=${compacted}`
+      `${prefix} Kills compact batch ${killBatch}: candidates=${candidates} compacted=${compacted} needCompact=${needCompact}`
     );
     if (candidates === 0) break;
     if (dryRun) break;
-    if (candidates < BATCH_LIMIT) break;
+    if (candidates < killBatchLimit) break;
   }
 
   let stubCandidates = 0;
@@ -90,7 +111,7 @@ async function main() {
     stubBatch += 1;
     const { candidates, deleted } = await deleteExpiredKillStubs({
       stubTtlDays,
-      limit: BATCH_LIMIT,
+      limit: killBatchLimit,
       dryRun,
     });
     stubCandidates += candidates;
@@ -100,7 +121,7 @@ async function main() {
     );
     if (candidates === 0) break;
     if (dryRun) break;
-    if (candidates < BATCH_LIMIT) break;
+    if (candidates < killBatchLimit) break;
   }
 
   const hours = await purgeExpiredGuildHourStats({
@@ -111,10 +132,11 @@ async function main() {
     `${prefix} Guild hours: players=${hours.playersDeleted} stats=${hours.statsDeleted}${dryRun ? " (would delete)" : ""}`
   );
 
+  const needCompactEnd = await countKillsNeedingCompaction(olderThanDays);
   console.log(
     dryRun
-      ? `${prefix} Dry run complete — battles ${battleCandidates} candidates (${battleSkippedProtected} protected, would evict ${battleCandidates - battleSkippedProtected}); kills compact ${killCandidates}; stubs ${stubCandidates}; hours players=${hours.playersDeleted} stats=${hours.statsDeleted}`
-      : `${prefix} Done — battles evicted ${battleEvicted} (skipped ${battleSkippedProtected} protected); kills compacted ${killCompacted}; stubs deleted ${stubsDeleted}; hours players=${hours.playersDeleted} stats=${hours.statsDeleted}`
+      ? `${prefix} Dry run complete — battles ${battleCandidates} candidates (${battleSkippedProtected} protected, would evict ${battleCandidates - battleSkippedProtected}); kills compact ${killCandidates}; stubs ${stubCandidates}; hours players=${hours.playersDeleted} stats=${hours.statsDeleted}; needCompact=${needCompactEnd}`
+      : `${prefix} Done — battles evicted ${battleEvicted} (skipped ${battleSkippedProtected} protected); kills compacted ${killCompacted}; stubs deleted ${stubsDeleted}; hours players=${hours.playersDeleted} stats=${hours.statsDeleted}; needCompact ${needCompactStart} -> ${needCompactEnd}`
   );
   process.exit(0);
 }

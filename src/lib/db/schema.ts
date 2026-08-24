@@ -272,6 +272,9 @@ export const killParticipants = pgTable(
     role: ownerRoleEnum("role").notNull(),
     name: text("name"),
     guildName: text("guild_name"),
+    guildAlbionId: text("guild_albion_id"),
+    allianceId: text("alliance_id"),
+    allianceTag: text("alliance_tag"),
     averageItemPower: numeric("average_item_power", { precision: 10, scale: 2 }),
     killFame: bigint("kill_fame", { mode: "number" }),
     deathFame: bigint("death_fame", { mode: "number" }),
@@ -282,6 +285,7 @@ export const killParticipants = pgTable(
     index("kill_participants_event_idx").on(t.eventId),
     index("kill_participants_guild_role_idx").on(t.guildName, t.role),
     index("kill_participants_player_idx").on(t.playerId),
+    index("kill_participants_guild_albion_id_idx").on(t.guildAlbionId),
   ]
 );
 
@@ -354,9 +358,7 @@ export const killItems = pgTable(
     eventId: uuid("event_id")
       .references(() => killEvents.id, { onDelete: "cascade" })
       .notNull(),
-    participantId: uuid("participant_id").references(() => killParticipants.id, {
-      onDelete: "cascade",
-    }),
+    participantId: uuid("participant_id"),
     ownerRole: ownerRoleEnum("owner_role").notNull(),
     category: itemCategoryEnum("category").notNull(),
     slot: text("slot"),
