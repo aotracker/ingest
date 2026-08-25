@@ -358,6 +358,7 @@ export const killItems = pgTable(
     eventId: uuid("event_id")
       .references(() => killEvents.id, { onDelete: "cascade" })
       .notNull(),
+    /** Set at ingest. No FK: retention deletes kill_items by event_id first. */
     participantId: uuid("participant_id"),
     ownerRole: ownerRoleEnum("owner_role").notNull(),
     category: itemCategoryEnum("category").notNull(),

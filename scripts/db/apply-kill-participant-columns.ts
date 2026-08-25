@@ -1,5 +1,6 @@
 /**
  * Participant denormalized cols + drop unused kill_items.participant_id FK.
+ * Ingest writes participant_id without restoring that FK (retention deletes by event_id).
  * Usage: npm run db:apply-kill-participant-columns (from ingest/, OVH VM or local)
  */
 import postgres from "postgres";

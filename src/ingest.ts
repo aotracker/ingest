@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
 import { getAlbionClient } from "@aotracker/core/albion/client";
@@ -730,45 +731,54 @@ type KillEventItemInsert = {
 type KillEventParticipantInsert = {
   role: "killer" | "victim" | "group_member" | "participant";
   ref: AlbionPlayerRef;
+  items: KillEventItemInsert[];
 };
 
+function itemsForPlayer(
+  ref: AlbionPlayerRef,
+  role: KillEventParticipantInsert["role"]
+): KillEventItemInsert[] {
+  return [
+    ...extractItemsFromEquipment(ref.Equipment, role),
+    ...extractInventoryItems(ref.Inventory, role),
+  ];
+}
+
 function collectKillEventRelations(event: AlbionEvent): {
-  allItems: KillEventItemInsert[];
   participantInserts: KillEventParticipantInsert[];
 } {
-  const allItems: KillEventItemInsert[] = [];
   const participantInserts: KillEventParticipantInsert[] = [];
 
   if (event.Killer) {
-    allItems.push(
-      ...extractItemsFromEquipment(event.Killer.Equipment, "killer"),
-      ...extractInventoryItems(event.Killer.Inventory, "killer")
-    );
-    participantInserts.push({ role: "killer", ref: event.Killer });
+    participantInserts.push({
+      role: "killer",
+      ref: event.Killer,
+      items: itemsForPlayer(event.Killer, "killer"),
+    });
   }
   if (event.Victim) {
-    allItems.push(
-      ...extractItemsFromEquipment(event.Victim.Equipment, "victim"),
-      ...extractInventoryItems(event.Victim.Inventory, "victim")
-    );
-    participantInserts.push({ role: "victim", ref: event.Victim });
+    participantInserts.push({
+      role: "victim",
+      ref: event.Victim,
+      items: itemsForPlayer(event.Victim, "victim"),
+    });
   }
   for (const member of event.GroupMembers ?? []) {
-    participantInserts.push({ role: "group_member", ref: member });
-    allItems.push(
-      ...extractItemsFromEquipment(member.Equipment, "group_member"),
-      ...extractInventoryItems(member.Inventory, "group_member")
-    );
+    participantInserts.push({
+      role: "group_member",
+      ref: member,
+      items: itemsForPlayer(member, "group_member"),
+    });
   }
   for (const participant of event.Participants ?? []) {
-    participantInserts.push({ role: "participant", ref: participant });
-    allItems.push(
-      ...extractItemsFromEquipment(participant.Equipment, "participant"),
-      ...extractInventoryItems(participant.Inventory, "participant")
-    );
+    participantInserts.push({
+      role: "participant",
+      ref: participant,
+      items: itemsForPlayer(participant, "participant"),
+    });
   }
 
-  return { allItems, participantInserts };
+  return { participantInserts };
 }
 
 type KillParticipantRow = {
@@ -784,6 +794,7 @@ type KillParticipantRow = {
   killFame: number | null;
   deathFame: number | null;
   supportHealingDone: number | null;
+  items: KillEventItemInsert[];
 };
 
 async function resolveKillParticipantRows(
@@ -799,7 +810,7 @@ async function resolveKillParticipantRows(
   let killerId: string | null = null;
   let victimId: string | null = null;
 
-  for (const { role, ref } of participantInserts) {
+  for (const { role, ref, items } of participantInserts) {
     const playerId = ref.Id ? await upsertPlayer(region, ref, cache) : null;
     if (role === "killer") killerId = playerId;
     if (role === "victim") victimId = playerId;
@@ -816,6 +827,7 @@ async function resolveKillParticipantRows(
       killFame: toBigInt(ref.KillFame),
       deathFame: toBigInt(ref.DeathFame),
       supportHealingDone: toBigInt(ref.SupportHealingDone),
+      items,
     });
   }
 
@@ -825,42 +837,45 @@ async function resolveKillParticipantRows(
 async function insertKillEventChildren(
   tx: Pick<typeof db, "insert">,
   killEventUuid: string,
-  participantRows: KillParticipantRow[],
-  allItems: KillEventItemInsert[]
+  participantRows: KillParticipantRow[]
 ) {
-  if (participantRows.length > 0) {
-    await tx.insert(schema.killParticipants).values(
-      participantRows.map((row) => ({
-        eventId: killEventUuid,
-        playerId: row.playerId,
-        role: row.role,
-        name: row.name,
-        guildName: row.guildName,
-        guildAlbionId: row.guildAlbionId,
-        allianceId: row.allianceId,
-        allianceTag: row.allianceTag,
-        averageItemPower: row.averageItemPower,
-        killFame: row.killFame,
-        deathFame: row.deathFame,
-        supportHealingDone: row.supportHealingDone,
-        rawPayload: null,
-      }))
-    );
-  }
+  if (participantRows.length === 0) return;
 
-  if (allItems.length > 0) {
-    await tx.insert(schema.killItems).values(
-      allItems.map((item) => ({
-        eventId: killEventUuid,
-        ownerRole: item.ownerRole,
-        category: item.category,
-        slot: item.slot,
-        itemType: item.itemType,
-        quality: item.quality,
-        count: item.count,
-        spells: item.spells,
-      }))
-    );
+  const participantIds = participantRows.map(() => randomUUID());
+  await tx.insert(schema.killParticipants).values(
+    participantRows.map((row, index) => ({
+      id: participantIds[index],
+      eventId: killEventUuid,
+      playerId: row.playerId,
+      role: row.role,
+      name: row.name,
+      guildName: row.guildName,
+      guildAlbionId: row.guildAlbionId,
+      allianceId: row.allianceId,
+      allianceTag: row.allianceTag,
+      averageItemPower: row.averageItemPower,
+      killFame: row.killFame,
+      deathFame: row.deathFame,
+      supportHealingDone: row.supportHealingDone,
+      rawPayload: null,
+    }))
+  );
+
+  const itemValues = participantRows.flatMap((row, index) =>
+    row.items.map((item) => ({
+      eventId: killEventUuid,
+      participantId: participantIds[index],
+      ownerRole: item.ownerRole,
+      category: item.category,
+      slot: item.slot,
+      itemType: item.itemType,
+      quality: item.quality,
+      count: item.count,
+      spells: item.spells,
+    }))
+  );
+  if (itemValues.length > 0) {
+    await tx.insert(schema.killItems).values(itemValues);
   }
 }
 
@@ -991,7 +1006,7 @@ export async function upsertKillEventDetail(
     battleTotalPlayers: battleDetail?.totalPlayers,
   });
 
-  const { allItems, participantInserts } = collectKillEventRelations(event);
+  const { participantInserts } = collectKillEventRelations(event);
   const { rows: participantRows, killerId, victimId } =
     await resolveKillParticipantRows(
       region,
@@ -1085,7 +1100,7 @@ export async function upsertKillEventDetail(
         killEventUuid = killEvent.id;
       }
 
-      await insertKillEventChildren(tx, killEventUuid, participantRows, allItems);
+      await insertKillEventChildren(tx, killEventUuid, participantRows);
       await recordGuildHourActivity(tx, {
         region,
         occurredAt: eventRow.occurredAt,
