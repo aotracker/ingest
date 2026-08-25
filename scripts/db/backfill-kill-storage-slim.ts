@@ -2,28 +2,23 @@
  * Backfill slim kill storage on existing full-detail rows.
  *
  * Usage:
- *   npm run db:backfill-kill-storage [--dry-run] [--batch=500] [--phase=all|cols|null-payload|slim-events]
+ *   npm run db:backfill-kill-storage [--dry-run] [--batch=N] [--phase=all|cols|null-payload|slim-events]
  *
  * Phases:
  *   cols          — copy GuildId / AllianceId / AllianceTag into columns (only when payload has a value)
- *   null-payload  — null participant raw_payload when equipment rows exist in kill_items
+ *   null-payload  — null all remaining participant raw_payload (builds read kill_items)
  *   slim-events   — rewrite kill_events.raw_payload to slim form
  *   all           — run phases in order (default)
  *
- * Resume on prod after a stuck cols loop:
- *   npm run db:backfill-kill-storage -- --phase=null-payload
+ * Resume after Ctrl-C:
+ *   npm run db:backfill-kill-storage -- --phase=null-payload --batch=20000
+ *   npm run db:backfill-kill-storage -- --phase=slim-events --batch=1000
  */
 import postgres from "postgres";
 import { slimKillEventPayload } from "../../src/lib/albion/slim-kill-event";
 import type { AlbionEvent } from "../../src/lib/albion/types";
 
 type Phase = "all" | "cols" | "null-payload" | "slim-events";
-
-function parseBatch(): number {
-  const arg = process.argv.find((a) => a.startsWith("--batch="));
-  if (!arg) return 500;
-  return Math.max(1, parseInt(arg.slice("--batch=".length), 10) || 500);
-}
 
 function parsePhase(): Phase {
   const arg = process.argv.find((a) => a.startsWith("--phase="));
@@ -42,6 +37,18 @@ function parsePhase(): Phase {
   );
 }
 
+/** Defaults sized for prod: null-payload was ~30s+/500 with EXISTS join — too slow. */
+function parseBatch(phase: Phase): number {
+  const arg = process.argv.find((a) => a.startsWith("--batch="));
+  if (arg) {
+    return Math.max(1, parseInt(arg.slice("--batch=".length), 10) || 500);
+  }
+  if (phase === "null-payload") return 20_000;
+  if (phase === "slim-events") return 1_000;
+  if (phase === "cols") return 5_000;
+  return 5_000;
+}
+
 function shouldRun(phase: Phase, target: Exclude<Phase, "all">): boolean {
   return phase === "all" || phase === target;
 }
@@ -51,8 +58,8 @@ async function main() {
   if (!url) throw new Error("DATABASE_URL is required");
 
   const dryRun = process.argv.includes("--dry-run");
-  const batch = parseBatch();
   const phase = parsePhase();
+  const batch = parseBatch(phase);
   const prefix = "[db:backfill-kill-storage]";
   const sql = postgres(url, { max: 1 });
 
@@ -92,8 +99,6 @@ async function main() {
           break;
         }
 
-        // Only select rows where payload still has an extractable value we have not copied.
-        // Rows with no AllianceTag (common) exit the queue after GuildId/AllianceId are filled.
         const updated = await sql`
           WITH batch AS (
             SELECT id
@@ -145,19 +150,14 @@ async function main() {
 
     let nulledParticipantPayload = 0;
     if (shouldRun(phase, "null-payload")) {
+      // No EXISTS join — that was ~1 batch/min on prod. Builds prefer kill_items;
+      // dual-source fallback only matters until this phase finishes.
       for (;;) {
         if (dryRun) {
           const [{ count }] = await sql<{ count: number }[]>`
             SELECT COUNT(*)::int AS count
-            FROM kill_participants kp
-            WHERE kp.raw_payload IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                FROM kill_items ki
-                WHERE ki.event_id = kp.event_id
-                  AND ki.owner_role = kp.role
-                  AND ki.category = 'equipment'
-              )
+            FROM kill_participants
+            WHERE raw_payload IS NOT NULL
           `;
           nulledParticipantPayload = count;
           console.log(
@@ -168,16 +168,9 @@ async function main() {
 
         const updated = await sql`
           WITH batch AS (
-            SELECT kp.id
-            FROM kill_participants kp
-            WHERE kp.raw_payload IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                FROM kill_items ki
-                WHERE ki.event_id = kp.event_id
-                  AND ki.owner_role = kp.role
-                  AND ki.category = 'equipment'
-              )
+            SELECT id
+            FROM kill_participants
+            WHERE raw_payload IS NOT NULL
             LIMIT ${batch}
           )
           UPDATE kill_participants kp
@@ -239,7 +232,7 @@ async function main() {
     console.log(
       dryRun
         ? `${prefix} Dry run complete — would backfill participant cols (${participantCols}), null participant JSONB (${nulledParticipantPayload}), slim events (${slimmedEvents}). Re-run without --dry-run to apply.`
-        : `${prefix} Done — participant cols ${participantCols}, nulled participant JSONB ${nulledParticipantPayload}, slim events ${slimmedEvents}. Run VACUUM ANALYZE on kill_events, kill_participants, kill_items when convenient.`
+        : `${prefix} Done — participant cols ${participantCols}, nulled participant JSONB (${nulledParticipantPayload}), slim events (${slimmedEvents}). Run VACUUM ANALYZE on kill_events, kill_participants, kill_items when convenient.`
     );
   } finally {
     await sql.end();
