@@ -5,34 +5,27 @@ import {
   feedFilters,
   findMatchingFeeds,
   hasPostedMessage,
+  recordPostedMessage,
   tryClaimPost,
   type DiscordFeedRow,
 } from "./db";
+import { killMeetsFeedFilters } from "./kill-filters";
 import { loadKillSnapshot } from "./kill-data";
 import { postKillToFeed } from "./poster";
 import {
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
   killEventKey,
+  skippedFilterMessageId,
   type DiscordFeedType,
 } from "./types";
 
-function feedAcceptsFame(
-  feed: DiscordFeedRow,
-  fame: number,
-  contentType?: string
-): boolean {
-  const filters = feedFilters(feed);
-  if (filters.paused) return false;
-  if (filters.minFame != null && fame < filters.minFame) return false;
-  if (
-    filters.contentTypes?.length &&
-    contentType &&
-    !filters.contentTypes.includes(contentType)
-  ) {
-    return false;
-  }
-  return true;
+function recordSkippedFilter(
+  feedId: string,
+  eventKey: string,
+  reason: string
+): Promise<void> {
+  return recordPostedMessage(feedId, eventKey, skippedFilterMessageId(reason));
 }
 
 export async function postKillToMatchingFeeds(input: {
@@ -99,8 +92,13 @@ export async function postKillToMatchingFeeds(input: {
       skipped.push(`${feed.feedType}: no channel set`);
       continue;
     }
-    if (!feedAcceptsFame(feed, fame, snapshot.contentType)) {
-      skipped.push(`${feed.feedType}: filtered out`);
+    const accepted = await killMeetsFeedFilters(feed, snapshot);
+    if (!accepted.ok) {
+      skipped.push(`${feed.feedType}: filtered out (${accepted.reason})`);
+      if (!input.force) {
+        await tryClaimPost(feed.id, eventKey);
+        await recordSkippedFilter(feed.id, eventKey, accepted.reason);
+      }
       continue;
     }
 
@@ -118,6 +116,7 @@ export async function postKillToMatchingFeeds(input: {
       channelId: feed.channelId,
       eventKey,
       snapshot,
+      pingRoleId: feedFilters(feed).pingRoleId,
     });
     posted.push({ feedType: feed.feedType, channelId: feed.channelId });
   }

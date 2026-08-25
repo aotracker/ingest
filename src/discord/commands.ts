@@ -14,23 +14,39 @@ import {
   type AlbionRegion,
 } from "@aotracker/core/albion/types";
 import {
+  getAllianceByAlbionId,
+  getAllianceByName,
   getGuildByAlbionId,
   getGuildByName,
+  getPlayerByAlbionId,
+  getPlayerByName,
   listFeedsForServer,
+  searchAlliancesForAutocomplete,
   searchGuildsForAutocomplete,
+  searchPlayersForAutocomplete,
   setFeedChannel,
   trackGuildFeeds,
   untrackGuildFeeds,
   updateFeedFilters,
   upsertDiscordServer,
 } from "./db";
+import { regionLabel } from "./format";
+import {
+  addWatchlistEntry,
+  consumeWatchlistRateLimit,
+  feudPageUrl,
+  findUserIdByDiscordAccountId,
+  guildProfileUrl,
+  listClaimedCharactersForUser,
+  playerProfileUrl,
+} from "./site-user";
 import {
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
   parseFilters,
   type DiscordFeedFilters,
+  type DiscordFeedType,
 } from "./types";
-import { regionLabel } from "./format";
 
 function isRegion(value: string | null): value is AlbionRegion {
   return !!value && (ALL_REGIONS as string[]).includes(value);
@@ -123,33 +139,201 @@ export const slashCommandBuilders = [
     )
     .addBooleanOption((option) =>
       option.setName("paused").setDescription("Pause Discord posts")
+    )
+    .addStringOption((option) =>
+      option
+        .setName("feed")
+        .setDescription("Which feed to update (default: both)")
+        .addChoices(
+          { name: "Kills", value: "kills" },
+          { name: "Deaths", value: "deaths" },
+          { name: "Both", value: "both" }
+        )
+    ),
+  guildCommand()
+    .setName("ping-role")
+    .setDescription("Role to mention on kill/death posts")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addRoleOption((option) =>
+      option.setName("role").setDescription("Role to ping (omit with clear)")
+    )
+    .addBooleanOption((option) =>
+      option.setName("clear").setDescription("Stop pinging a role")
+    )
+    .addStringOption((option) =>
+      option
+        .setName("feed")
+        .setDescription("Which feed to update (default: both)")
+        .addChoices(
+          { name: "Kills", value: "kills" },
+          { name: "Deaths", value: "deaths" },
+          { name: "Both", value: "both" }
+        )
+    ),
+  guildCommand()
+    .setName("whoami")
+    .setDescription("Show your AOTracker claimed character"),
+  guildCommand()
+    .setName("lookup")
+    .setDescription("Find an Albion player or guild on AOTracker")
+    .addStringOption((option) =>
+      option
+        .setName("type")
+        .setDescription("Player or guild")
+        .setRequired(true)
+        .addChoices(
+          { name: "Player", value: "player" },
+          { name: "Guild", value: "guild" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("region")
+        .setDescription("Albion region")
+        .setRequired(true)
+        .addChoices(
+          { name: "Americas", value: "americas" },
+          { name: "Europe", value: "europe" },
+          { name: "Asia", value: "asia" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("name")
+        .setDescription("Name (must already exist on AOTracker)")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+  guildCommand()
+    .setName("feud")
+    .setDescription("Link to the feud page for two Albion guilds")
+    .addStringOption((option) =>
+      option
+        .setName("region")
+        .setDescription("Albion region")
+        .setRequired(true)
+        .addChoices(
+          { name: "Americas", value: "americas" },
+          { name: "Europe", value: "europe" },
+          { name: "Asia", value: "asia" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("guild-a")
+        .setDescription("First guild")
+        .setRequired(true)
+        .setAutocomplete(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("guild-b")
+        .setDescription("Second guild")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+  guildCommand()
+    .setName("watchlist-add")
+    .setDescription("Add a player, guild, or alliance to your AOTracker watchlist")
+    .addStringOption((option) =>
+      option
+        .setName("type")
+        .setDescription("What to watch")
+        .setRequired(true)
+        .addChoices(
+          { name: "Player", value: "player" },
+          { name: "Guild", value: "guild" },
+          { name: "Alliance", value: "alliance" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("region")
+        .setDescription("Albion region")
+        .setRequired(true)
+        .addChoices(
+          { name: "Americas", value: "americas" },
+          { name: "Europe", value: "europe" },
+          { name: "Asia", value: "asia" }
+        )
+    )
+    .addStringOption((option) =>
+      option
+        .setName("name")
+        .setDescription("Name (must already exist on AOTracker)")
+        .setRequired(true)
+        .setAutocomplete(true)
     ),
 ];
+
+function autocompleteChoices(
+  rows: { albionId: string; name: string; region: AlbionRegion }[],
+  region?: AlbionRegion
+) {
+  return rows.slice(0, 25).map((row) => ({
+    name: region
+      ? row.name.slice(0, 100)
+      : `${row.name} (${regionLabel(row.region)})`.slice(0, 100),
+    value: row.albionId,
+  }));
+}
 
 export async function handleAutocomplete(
   interaction: AutocompleteInteraction
 ): Promise<void> {
-  if (interaction.commandName !== "track") {
-    await interaction.respond([]);
-    return;
-  }
   const focused = interaction.options.getFocused(true);
-  if (focused.name !== "guild") {
-    await interaction.respond([]);
-    return;
-  }
   const regionRaw = interaction.options.getString("region");
   const region = isRegion(regionRaw) ? regionRaw : undefined;
-  const rows = await searchGuildsForAutocomplete(focused.value, region);
-  await interaction.respond(
-    rows.slice(0, 25).map((row) => ({
-      name: region
-        ? row.name.slice(0, 100)
-        : `${row.name} (${regionLabel(row.region)})`.slice(0, 100),
-      value: row.albionId,
-    }))
-  );
+
+  if (interaction.commandName === "track" && focused.name === "guild") {
+    const rows = await searchGuildsForAutocomplete(focused.value, region);
+    await interaction.respond(autocompleteChoices(rows, region));
+    return;
+  }
+
+  if (
+    (interaction.commandName === "lookup" ||
+      interaction.commandName === "watchlist-add") &&
+    focused.name === "name"
+  ) {
+    const type = interaction.options.getString("type");
+    if (type === "player") {
+      const rows = await searchPlayersForAutocomplete(focused.value, region);
+      await interaction.respond(autocompleteChoices(rows, region));
+      return;
+    }
+    if (type === "guild") {
+      const rows = await searchGuildsForAutocomplete(focused.value, region);
+      await interaction.respond(autocompleteChoices(rows, region));
+      return;
+    }
+    if (type === "alliance") {
+      const rows = await searchAlliancesForAutocomplete(focused.value, region);
+      await interaction.respond(autocompleteChoices(rows, region));
+      return;
+    }
+  }
+
+  if (
+    interaction.commandName === "feud" &&
+    (focused.name === "guild-a" || focused.name === "guild-b")
+  ) {
+    const rows = await searchGuildsForAutocomplete(focused.value, region);
+    await interaction.respond(autocompleteChoices(rows, region));
+    return;
+  }
+
+  await interaction.respond([]);
 }
+
+const MANAGE_COMMANDS = new Set([
+  "track",
+  "kills-channel",
+  "deaths-channel",
+  "untrack",
+  "feed-filters",
+  "ping-role",
+]);
 
 export async function handleChatCommand(
   interaction: ChatInputCommandInteraction
@@ -163,7 +347,7 @@ export async function handleChatCommand(
   }
 
   if (
-    interaction.commandName !== "status" &&
+    MANAGE_COMMANDS.has(interaction.commandName) &&
     !hasManageGuild(interaction)
   ) {
     await interaction.reply({
@@ -193,6 +377,21 @@ export async function handleChatCommand(
       return;
     case "feed-filters":
       await handleFeedFilters(interaction);
+      return;
+    case "ping-role":
+      await handlePingRole(interaction);
+      return;
+    case "whoami":
+      await handleWhoami(interaction);
+      return;
+    case "lookup":
+      await handleLookup(interaction);
+      return;
+    case "feud":
+      await handleFeud(interaction);
+      return;
+    case "watchlist-add":
+      await handleWatchlistAdd(interaction);
       return;
     default:
       await interaction.reply({
@@ -295,17 +494,33 @@ async function handleStatus(
     return;
   }
   const target = kills ?? deaths;
-  const filters = parseFilters((kills ?? deaths)?.filters);
   const lines = [
     `**Guild:** ${target?.targetName ?? "?"} (${regionLabel(target?.region ?? "americas")})`,
     `**Kills:** ${kills?.channelId ? `<#${kills.channelId}>` : "not set"}`,
     `**Deaths:** ${deaths?.channelId ? `<#${deaths.channelId}>` : "not set"}`,
-    `**Paused:** ${filters.paused ? "yes" : "no"}`,
-    `**Min fame:** ${filters.minFame ?? 0}`,
-    `**Min silver:** ${filters.minSilver ?? 0}`,
-    `**Content:** ${filters.contentTypes?.length ? filters.contentTypes.join(", ") : "all"}`,
+    `**Kills filters:** ${formatFilterLine(parseFilters(kills?.filters))}`,
+    `**Deaths filters:** ${formatFilterLine(parseFilters(deaths?.filters))}`,
   ];
   await interaction.reply({ content: lines.join("\n"), ephemeral: true });
+}
+
+function formatFilterLine(filters: DiscordFeedFilters): string {
+  const parts = [
+    filters.paused ? "paused" : "active",
+    `fame ${filters.minFame ?? 0}`,
+    `silver ${filters.minSilver ?? 0}`,
+    filters.contentTypes?.length ? filters.contentTypes.join(",") : "all content",
+  ];
+  if (filters.pingRoleId) parts.push(`ping <@&${filters.pingRoleId}>`);
+  return parts.join(" · ");
+}
+
+function feedTypesFromOption(
+  value: string | null
+): DiscordFeedType[] | undefined {
+  if (value === "kills") return [FEED_GUILD_KILLS];
+  if (value === "deaths") return [FEED_GUILD_DEATHS];
+  return undefined;
 }
 
 async function handleFeedFilters(
@@ -352,16 +567,244 @@ async function handleFeedFilters(
     return;
   }
 
-  const updated = await updateFeedFilters(interaction.guildId!, patch);
+  const updated = await updateFeedFilters(
+    interaction.guildId!,
+    patch,
+    feedTypesFromOption(interaction.options.getString("feed"))
+  );
   const next = { ...parseFilters(feeds[0]?.filters), ...patch };
+  const scope = interaction.options.getString("feed") ?? "both";
   await interaction.reply({
     content: [
-      `Updated filters on ${updated} feed${updated === 1 ? "" : "s"}.`,
+      `Updated filters on ${updated} ${scope} feed${updated === 1 ? "" : "s"}.`,
       `Paused: ${next.paused ? "yes" : "no"}`,
       `Min fame: ${next.minFame ?? 0}`,
       `Min silver: ${next.minSilver ?? 0}`,
       `Content: ${next.contentTypes?.length ? next.contentTypes.join(", ") : "all"}`,
     ].join("\n"),
+    ephemeral: true,
+  });
+}
+
+async function handlePingRole(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const feeds = await listFeedsForServer(interaction.guildId!);
+  if (feeds.length === 0) {
+    await interaction.reply({
+      content: "Run `/track` first to choose an Albion guild.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const clear = interaction.options.getBoolean("clear");
+  const role = interaction.options.getRole("role");
+  if (!clear && !role) {
+    await interaction.reply({
+      content: "Pick a role, or set `clear` to stop pinging.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const patch: DiscordFeedFilters = {
+    pingRoleId: clear || !role ? undefined : role.id,
+  };
+  const updated = await updateFeedFilters(
+    interaction.guildId!,
+    patch,
+    feedTypesFromOption(interaction.options.getString("feed"))
+  );
+  await interaction.reply({
+    content: clear || !role
+      ? `Cleared ping role on ${updated} feed${updated === 1 ? "" : "s"}.`
+      : `Will ping <@&${role.id}> on ${updated} feed${updated === 1 ? "" : "s"}.`,
+    ephemeral: true,
+  });
+}
+
+async function handleWhoami(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const userId = await findUserIdByDiscordAccountId(interaction.user.id);
+  if (!userId) {
+    await interaction.reply({
+      content:
+        "No AOTracker account is linked to this Discord user. Sign in on aotracker.net and claim a character.",
+      ephemeral: true,
+    });
+    return;
+  }
+  const claims = await listClaimedCharactersForUser(userId);
+  if (claims.length === 0) {
+    await interaction.reply({
+      content:
+        "You're signed in on AOTracker, but no character is claimed. Open Account settings and claim one per region.",
+      ephemeral: true,
+    });
+    return;
+  }
+  const lines = claims.map(
+    (claim) =>
+      `**${claim.name}** (${regionLabel(claim.region)}) — ${playerProfileUrl(claim.region, claim.name)}`
+  );
+  await interaction.reply({
+    content: lines.join("\n"),
+    ephemeral: true,
+  });
+}
+
+async function handleLookup(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const type = interaction.options.getString("type", true);
+  const regionRaw = interaction.options.getString("region", true);
+  const name = interaction.options.getString("name", true);
+  if (!isRegion(regionRaw)) {
+    await interaction.reply({ content: "Pick a valid region.", ephemeral: true });
+    return;
+  }
+
+  if (type === "player") {
+    const player =
+      (await getPlayerByAlbionId(regionRaw, name)) ??
+      (await getPlayerByName(regionRaw, name));
+    if (!player) {
+      await interaction.reply({
+        content:
+          "That player is not in AOTracker yet. Open them on aotracker.net first.",
+        ephemeral: true,
+      });
+      return;
+    }
+    await interaction.reply({
+      content: `**${player.name}** (${regionLabel(regionRaw)})\n${playerProfileUrl(regionRaw, player.name)}`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const guild =
+    (await getGuildByAlbionId(regionRaw, name)) ??
+    (await getGuildByName(regionRaw, name));
+  if (!guild) {
+    await interaction.reply({
+      content:
+        "That guild is not in AOTracker yet. Open it on aotracker.net first.",
+      ephemeral: true,
+    });
+    return;
+  }
+  await interaction.reply({
+    content: `**${guild.name}** (${regionLabel(regionRaw)})\n${guildProfileUrl(regionRaw, guild.name)}`,
+    ephemeral: true,
+  });
+}
+
+async function handleFeud(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  const regionRaw = interaction.options.getString("region", true);
+  const a = interaction.options.getString("guild-a", true);
+  const b = interaction.options.getString("guild-b", true);
+  if (!isRegion(regionRaw)) {
+    await interaction.reply({ content: "Pick a valid region.", ephemeral: true });
+    return;
+  }
+  const guildA =
+    (await getGuildByAlbionId(regionRaw, a)) ?? (await getGuildByName(regionRaw, a));
+  const guildB =
+    (await getGuildByAlbionId(regionRaw, b)) ?? (await getGuildByName(regionRaw, b));
+  if (!guildA || !guildB) {
+    await interaction.reply({
+      content:
+        "Both guilds must already exist on AOTracker. Search them on the site first.",
+      ephemeral: true,
+    });
+    return;
+  }
+  if (guildA.albionId === guildB.albionId) {
+    await interaction.reply({
+      content: "Pick two different guilds.",
+      ephemeral: true,
+    });
+    return;
+  }
+  await interaction.reply({
+    content: `${guildA.name} vs ${guildB.name} (${regionLabel(regionRaw)})\n${feudPageUrl(regionRaw, guildA.name, guildB.name)}`,
+    ephemeral: true,
+  });
+}
+
+async function handleWatchlistAdd(
+  interaction: ChatInputCommandInteraction
+): Promise<void> {
+  if (!consumeWatchlistRateLimit(interaction.user.id)) {
+    await interaction.reply({
+      content: "Too many watchlist updates. Try again in a few minutes.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const userId = await findUserIdByDiscordAccountId(interaction.user.id);
+  if (!userId) {
+    await interaction.reply({
+      content:
+        "Sign in on aotracker.net with this Discord account first, then run `/watchlist-add` again.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const type = interaction.options.getString("type", true);
+  const regionRaw = interaction.options.getString("region", true);
+  const name = interaction.options.getString("name", true);
+  if (!isRegion(regionRaw)) {
+    await interaction.reply({ content: "Pick a valid region.", ephemeral: true });
+    return;
+  }
+
+  let entity: { albionId: string; name: string } | null = null;
+  if (type === "player") {
+    const player =
+      (await getPlayerByAlbionId(regionRaw, name)) ??
+      (await getPlayerByName(regionRaw, name));
+    if (player) entity = { albionId: player.albionId, name: player.name };
+  } else if (type === "guild") {
+    const guild =
+      (await getGuildByAlbionId(regionRaw, name)) ??
+      (await getGuildByName(regionRaw, name));
+    if (guild) entity = { albionId: guild.albionId, name: guild.name };
+  } else if (type === "alliance") {
+    const alliance =
+      (await getAllianceByAlbionId(regionRaw, name)) ??
+      (await getAllianceByName(regionRaw, name));
+    if (alliance) entity = { albionId: alliance.albionId, name: alliance.name };
+  }
+
+  if (!entity || (type !== "player" && type !== "guild" && type !== "alliance")) {
+    await interaction.reply({
+      content:
+        "That entity is not in AOTracker yet. Open it on aotracker.net first.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const result = await addWatchlistEntry({
+    userId,
+    type,
+    region: regionRaw,
+    albionId: entity.albionId,
+    name: entity.name,
+  });
+  await interaction.reply({
+    content:
+      result === "added"
+        ? `Added **${entity.name}** to your AOTracker watchlist.`
+        : `**${entity.name}** is already on your watchlist.`,
     ephemeral: true,
   });
 }

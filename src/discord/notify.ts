@@ -1,9 +1,10 @@
 import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { isDiscordEnabled } from "./enabled";
-import { getFeedById, hasPostedMessage } from "./db";
+import { feedFilters, getFeedById, hasPostedMessage, recordPostedMessage } from "./db";
+import { killMeetsFeedFilters } from "./kill-filters";
 import { loadKillSnapshot } from "./kill-data";
 import { postKillToFeed } from "./poster";
-import { killEventKey } from "./types";
+import { killEventKey, skippedFilterMessageId } from "./types";
 
 export async function handleNotifyDiscord(payload: {
   region?: AlbionRegion;
@@ -29,11 +30,22 @@ export async function handleNotifyDiscord(payload: {
   }
   if ((snapshot.totalVictimKillFame ?? 0) <= 0) return;
 
+  const filters = await killMeetsFeedFilters(feed, snapshot);
+  if (!filters.ok) {
+    await recordPostedMessage(
+      feed.id,
+      eventKey,
+      skippedFilterMessageId(filters.reason)
+    );
+    return;
+  }
+
   await postKillToFeed({
     feedId: feed.id,
     feedType: feed.feedType,
     channelId: feed.channelId,
     eventKey,
     snapshot,
+    pingRoleId: feedFilters(feed).pingRoleId,
   });
 }

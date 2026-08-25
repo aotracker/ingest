@@ -1,6 +1,11 @@
 import { REST } from "@discordjs/rest";
 import { Routes } from "discord-api-types/v10";
-import type { APIEmbed } from "discord-api-types/v10";
+import {
+  ButtonStyle,
+  ComponentType,
+  type APIButtonComponent,
+  type APIEmbed,
+} from "discord-api-types/v10";
 import { appPublicUrl, discordBotToken } from "./enabled";
 import { recordPostedMessage } from "./db";
 import { regionLabel, formatUtcStamp } from "./format";
@@ -20,18 +25,56 @@ function restClient(): REST {
   return new REST({ version: "10" }).setToken(token);
 }
 
+function playerUrl(region: string, name: string | null | undefined): string | null {
+  const trimmed = name?.trim();
+  if (!trimmed || trimmed === "Unknown") return null;
+  return `${appPublicUrl()}/player/${region}/${encodeURIComponent(trimmed)}`;
+}
+
+function killLinkButtons(snapshot: KillSnapshot) {
+  const killUrl = `${appPublicUrl()}/kill/${snapshot.region}/${snapshot.eventId}`;
+  const buttons: APIButtonComponent[] = [];
+  const killerUrl = playerUrl(snapshot.region, snapshot.killer?.name);
+  const victimUrl = playerUrl(snapshot.region, snapshot.victim?.name);
+  if (killerUrl) {
+    buttons.push({
+      type: ComponentType.Button,
+      style: ButtonStyle.Link,
+      label: "Killer",
+      url: killerUrl,
+    });
+  }
+  if (victimUrl) {
+    buttons.push({
+      type: ComponentType.Button,
+      style: ButtonStyle.Link,
+      label: "Victim",
+      url: victimUrl,
+    });
+  }
+  buttons.push({
+    type: ComponentType.Button,
+    style: ButtonStyle.Link,
+    label: "Kill page",
+    url: killUrl,
+  });
+  return [{ type: ComponentType.ActionRow, components: buttons }];
+}
+
 export async function postKillToFeed(input: {
   feedId: string;
   feedType: string;
   channelId: string;
   eventKey: string;
   snapshot: KillSnapshot;
+  pingRoleId?: string | null;
 }): Promise<void> {
   const { snapshot } = input;
   const isDeath = input.feedType === FEED_GUILD_DEATHS;
   const killer = snapshot.killer?.name?.trim() || "Unknown";
   const victim = snapshot.victim?.name?.trim() || "Unknown";
   const killUrl = `${appPublicUrl()}/kill/${snapshot.region}/${snapshot.eventId}`;
+  const pingRoleId = input.pingRoleId?.trim() || "";
 
   const embed: APIEmbed = {
     color: isDeath ? COLOR_DEATH : COLOR_KILL,
@@ -83,7 +126,14 @@ export async function postKillToFeed(input: {
   try {
     const message = (await enqueueChannelSend(input.channelId, () =>
       rest.post(Routes.channelMessages(input.channelId), {
-        body: { embeds: [embed] },
+        body: {
+          content: pingRoleId ? `<@&${pingRoleId}>` : undefined,
+          allowed_mentions: pingRoleId
+            ? { parse: [], roles: [pingRoleId] }
+            : { parse: [] },
+          embeds: [embed],
+          components: killLinkButtons(snapshot),
+        },
         files: attachment ? [attachment] : undefined,
       })
     )) as { id?: string };

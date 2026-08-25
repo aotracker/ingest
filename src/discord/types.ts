@@ -23,3 +23,7 @@ export function parseFilters(value: unknown): DiscordFeedFilters {
 export function killEventKey(region: string, eventId: number): string {
   return `kill:${region}:${eventId}`;
 }
+
+export function skippedFilterMessageId(reason: string): string {
+  return `skipped:${reason}`;
+}

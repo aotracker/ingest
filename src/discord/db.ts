@@ -157,7 +157,84 @@ export async function searchGuildsForAutocomplete(
   return rows;
 }
 
-export { getGuildByAlbionId } from "@aotracker/core/db/queries-ingest";
+export async function searchPlayersForAutocomplete(
+  query: string,
+  region?: AlbionRegion
+): Promise<{ albionId: string; name: string; region: AlbionRegion }[]> {
+  const trimmed = query.trim();
+  const filters = [];
+  if (region) filters.push(eq(schema.players.region, region));
+  if (trimmed) filters.push(ilike(schema.players.name, `%${trimmed}%`));
+
+  const rows = await db
+    .select({
+      albionId: schema.players.albionId,
+      name: schema.players.name,
+      region: schema.players.region,
+    })
+    .from(schema.players)
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(schema.players.name)
+    .limit(25);
+
+  return rows;
+}
+
+export async function searchAlliancesForAutocomplete(
+  query: string,
+  region?: AlbionRegion
+): Promise<{ albionId: string; name: string; region: AlbionRegion }[]> {
+  const trimmed = query.trim();
+  const filters = [];
+  if (region) filters.push(eq(schema.alliances.region, region));
+  if (trimmed) {
+    filters.push(
+      or(
+        ilike(schema.alliances.name, `%${trimmed}%`),
+        ilike(schema.alliances.tag, `%${trimmed}%`)
+      )
+    );
+  }
+
+  const rows = await db
+    .select({
+      albionId: schema.alliances.albionId,
+      name: schema.alliances.name,
+      region: schema.alliances.region,
+    })
+    .from(schema.alliances)
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(schema.alliances.name)
+    .limit(25);
+
+  return rows;
+}
+
+export async function getPlayerByAlbionId(region: AlbionRegion, albionId: string) {
+  return db.query.players.findFirst({
+    where: and(
+      eq(schema.players.region, region),
+      eq(schema.players.albionId, albionId)
+    ),
+  });
+}
+
+export async function getPlayerByName(region: AlbionRegion, name: string) {
+  return db.query.players.findFirst({
+    where: and(eq(schema.players.region, region), ilike(schema.players.name, name)),
+  });
+}
+
+export async function getAllianceByName(region: AlbionRegion, name: string) {
+  return db.query.alliances.findFirst({
+    where: and(
+      eq(schema.alliances.region, region),
+      or(ilike(schema.alliances.name, name), ilike(schema.alliances.tag, name))
+    ),
+  });
+}
+
+export { getGuildByAlbionId, getAllianceByAlbionId } from "@aotracker/core/db/queries-ingest";
 
 export async function getGuildByName(region: AlbionRegion, name: string) {
   return db.query.guilds.findFirst({
@@ -403,15 +480,19 @@ export function feedFilters(feed: DiscordFeedRow): DiscordFeedFilters {
 
 export async function updateFeedFilters(
   discordGuildId: string,
-  patch: DiscordFeedFilters
+  patch: DiscordFeedFilters,
+  feedTypes?: DiscordFeedType[]
 ): Promise<number> {
   const feeds = await listFeedsForServer(discordGuildId);
-  if (feeds.length === 0) return 0;
+  const targets = feedTypes?.length
+    ? feeds.filter((row) => feedTypes.includes(row.feedType as DiscordFeedType))
+    : feeds;
+  if (targets.length === 0) return 0;
 
   const now = new Date();
   let updated = 0;
-  for (const feed of feeds) {
-    const next = { ...feedFilters(feed), ...patch };
+  for (const feed of targets) {
+    const next = applyFilterPatch(feedFilters(feed), patch);
     await db
       .update(schema.discordFeeds)
       .set({ filters: next, updatedAt: now })
@@ -419,6 +500,22 @@ export async function updateFeedFilters(
     updated += 1;
   }
   return updated;
+}
+
+function applyFilterPatch(
+  current: DiscordFeedFilters,
+  patch: DiscordFeedFilters
+): DiscordFeedFilters {
+  const next: DiscordFeedFilters = { ...current };
+  for (const key of Object.keys(patch) as (keyof DiscordFeedFilters)[]) {
+    const value = patch[key];
+    if (value == null || value === false || (Array.isArray(value) && value.length === 0)) {
+      delete next[key];
+    } else {
+      Object.assign(next, { [key]: value });
+    }
+  }
+  return next;
 }
 
 export async function listPlayerAlbionIdsForGuild(
