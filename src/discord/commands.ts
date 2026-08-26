@@ -41,9 +41,11 @@ import {
   playerProfileUrl,
 } from "./site-user";
 import {
+  FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
   parseFilters,
+  DEFAULT_BATTLE_FEED_MIN_PLAYERS,
   type DiscordFeedFilters,
   type DiscordFeedType,
 } from "./types";
@@ -67,7 +69,7 @@ function guildCommand(): SlashCommandBuilder {
 export const slashCommandBuilders = [
   guildCommand()
     .setName("track")
-    .setDescription("Follow an Albion guild's kills and deaths in this server")
+    .setDescription("Follow an Albion guild's kills, deaths, and battles in this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addStringOption((option) =>
       option
@@ -110,15 +112,26 @@ export const slashCommandBuilders = [
         .setRequired(true)
     ),
   guildCommand()
+    .setName("battles-channel")
+    .setDescription("Channel for tracked-guild battle summaries")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("Battles channel")
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)
+    ),
+  guildCommand()
     .setName("untrack")
-    .setDescription("Stop posting kills and deaths in this server")
+    .setDescription("Stop posting kills, deaths, and battles in this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   guildCommand()
     .setName("status")
     .setDescription("Show AOTracker Discord feed settings for this server"),
   guildCommand()
     .setName("feed-filters")
-    .setDescription("Set min fame, content types, or pause Discord kill posts")
+    .setDescription("Set min fame, min players, content types, or pause Discord posts")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addIntegerOption((option) =>
       option
@@ -140,19 +153,32 @@ export const slashCommandBuilders = [
     .addBooleanOption((option) =>
       option.setName("paused").setDescription("Pause Discord posts")
     )
+    .addIntegerOption((option) =>
+      option
+        .setName("min-players")
+        .setDescription("Minimum battle size (players). Used by the battles feed.")
+        .setMinValue(1)
+        .setMaxValue(500)
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("create-thread")
+        .setDescription("Start a Discord thread for each battle summary")
+    )
     .addStringOption((option) =>
       option
         .setName("feed")
-        .setDescription("Which feed to update (default: both)")
+        .setDescription("Which feed to update (default: all)")
         .addChoices(
           { name: "Kills", value: "kills" },
           { name: "Deaths", value: "deaths" },
-          { name: "Both", value: "both" }
+          { name: "Battles", value: "battles" },
+          { name: "All", value: "both" }
         )
     ),
   guildCommand()
     .setName("ping-role")
-    .setDescription("Role to mention on kill/death posts")
+    .setDescription("Role to mention on kill, death, or battle posts")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addRoleOption((option) =>
       option.setName("role").setDescription("Role to ping (omit with clear)")
@@ -163,11 +189,12 @@ export const slashCommandBuilders = [
     .addStringOption((option) =>
       option
         .setName("feed")
-        .setDescription("Which feed to update (default: both)")
+        .setDescription("Which feed to update (default: all)")
         .addChoices(
           { name: "Kills", value: "kills" },
           { name: "Deaths", value: "deaths" },
-          { name: "Both", value: "both" }
+          { name: "Battles", value: "battles" },
+          { name: "All", value: "both" }
         )
     ),
   guildCommand()
@@ -330,6 +357,7 @@ const MANAGE_COMMANDS = new Set([
   "track",
   "kills-channel",
   "deaths-channel",
+  "battles-channel",
   "untrack",
   "feed-filters",
   "ping-role",
@@ -368,6 +396,9 @@ export async function handleChatCommand(
       return;
     case "deaths-channel":
       await handleChannel(interaction, FEED_GUILD_DEATHS, "deaths");
+      return;
+    case "battles-channel":
+      await handleChannel(interaction, FEED_GUILD_BATTLES, "battles");
       return;
     case "untrack":
       await handleUntrack(interaction);
@@ -437,15 +468,15 @@ async function handleTrack(
 
   await interaction.reply({
     content: replaced
-      ? `Now tracking **${guild.name}** (${regionLabel(regionRaw)}). Previous guild tracking was replaced. Set channels with \`/kills-channel\` and \`/deaths-channel\`.`
-      : `Tracking **${guild.name}** (${regionLabel(regionRaw)}). Set channels with \`/kills-channel\` and \`/deaths-channel\`.`,
+      ? `Now tracking **${guild.name}** (${regionLabel(regionRaw)}). Previous guild tracking was replaced. Set channels with \`/kills-channel\`, \`/deaths-channel\`, and \`/battles-channel\`.`
+      : `Tracking **${guild.name}** (${regionLabel(regionRaw)}). Set channels with \`/kills-channel\`, \`/deaths-channel\`, and \`/battles-channel\`.`,
     ephemeral: true,
   });
 }
 
 async function handleChannel(
   interaction: ChatInputCommandInteraction,
-  feedType: typeof FEED_GUILD_KILLS | typeof FEED_GUILD_DEATHS,
+  feedType: DiscordFeedType,
   label: string
 ): Promise<void> {
   const channel = interaction.options.getChannel("channel", true);
@@ -474,7 +505,7 @@ async function handleUntrack(
   await interaction.reply({
     content:
       removed > 0
-        ? "Stopped tracking. Channels will no longer receive kill/death posts."
+        ? "Stopped tracking. Channels will no longer receive kill, death, or battle posts."
         : "Nothing was being tracked in this server.",
     ephemeral: true,
   });
@@ -486,20 +517,23 @@ async function handleStatus(
   const feeds = await listFeedsForServer(interaction.guildId!);
   const kills = feeds.find((f) => f.feedType === FEED_GUILD_KILLS);
   const deaths = feeds.find((f) => f.feedType === FEED_GUILD_DEATHS);
-  if (!kills && !deaths) {
+  const battles = feeds.find((f) => f.feedType === FEED_GUILD_BATTLES);
+  if (!kills && !deaths && !battles) {
     await interaction.reply({
       content: "No Albion guild is tracked. Use `/track` to start.",
       ephemeral: true,
     });
     return;
   }
-  const target = kills ?? deaths;
+  const target = kills ?? deaths ?? battles;
   const lines = [
     `**Guild:** ${target?.targetName ?? "?"} (${regionLabel(target?.region ?? "americas")})`,
     `**Kills:** ${kills?.channelId ? `<#${kills.channelId}>` : "not set"}`,
     `**Deaths:** ${deaths?.channelId ? `<#${deaths.channelId}>` : "not set"}`,
+    `**Battles:** ${battles?.channelId ? `<#${battles.channelId}>` : "not set"}`,
     `**Kills filters:** ${formatFilterLine(parseFilters(kills?.filters))}`,
     `**Deaths filters:** ${formatFilterLine(parseFilters(deaths?.filters))}`,
+    `**Battles filters:** ${formatBattleFilterLine(parseFilters(battles?.filters))}`,
   ];
   await interaction.reply({ content: lines.join("\n"), ephemeral: true });
 }
@@ -515,11 +549,22 @@ function formatFilterLine(filters: DiscordFeedFilters): string {
   return parts.join(" · ");
 }
 
+function formatBattleFilterLine(filters: DiscordFeedFilters): string {
+  const parts = [
+    filters.paused ? "paused" : "active",
+    `min players ${filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
+    filters.createThread ? "thread" : "no thread",
+  ];
+  if (filters.pingRoleId) parts.push(`ping <@&${filters.pingRoleId}>`);
+  return parts.join(" · ");
+}
+
 function feedTypesFromOption(
   value: string | null
 ): DiscordFeedType[] | undefined {
   if (value === "kills") return [FEED_GUILD_KILLS];
   if (value === "deaths") return [FEED_GUILD_DEATHS];
+  if (value === "battles") return [FEED_GUILD_BATTLES];
   return undefined;
 }
 
@@ -540,6 +585,8 @@ async function handleFeedFilters(
   const minSilver = interaction.options.getInteger("min-silver");
   const content = interaction.options.getString("content");
   const paused = interaction.options.getBoolean("paused");
+  const minPlayers = interaction.options.getInteger("min-players");
+  const createThread = interaction.options.getBoolean("create-thread");
 
   if (minFame != null) {
     patch.minFame = minFame > 0 ? minFame : undefined;
@@ -557,11 +604,17 @@ async function handleFeedFilters(
   if (paused != null) {
     patch.paused = paused || undefined;
   }
+  if (minPlayers != null) {
+    patch.minPlayers = minPlayers;
+  }
+  if (createThread != null) {
+    patch.createThread = createThread || undefined;
+  }
 
   if (Object.keys(patch).length === 0) {
     await interaction.reply({
       content:
-        "Provide at least one option: `min-fame`, `min-silver`, `content`, or `paused`.",
+        "Provide at least one option: `min-fame`, `min-silver`, `content`, `paused`, `min-players`, or `create-thread`.",
       ephemeral: true,
     });
     return;
@@ -573,13 +626,15 @@ async function handleFeedFilters(
     feedTypesFromOption(interaction.options.getString("feed"))
   );
   const next = { ...parseFilters(feeds[0]?.filters), ...patch };
-  const scope = interaction.options.getString("feed") ?? "both";
+  const scope = interaction.options.getString("feed") ?? "all";
   await interaction.reply({
     content: [
       `Updated filters on ${updated} ${scope} feed${updated === 1 ? "" : "s"}.`,
       `Paused: ${next.paused ? "yes" : "no"}`,
       `Min fame: ${next.minFame ?? 0}`,
       `Min silver: ${next.minSilver ?? 0}`,
+      `Min players: ${next.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
+      `Thread per battle: ${next.createThread ? "yes" : "no"}`,
       `Content: ${next.contentTypes?.length ? next.contentTypes.join(", ") : "all"}`,
     ].join("\n"),
     ephemeral: true,

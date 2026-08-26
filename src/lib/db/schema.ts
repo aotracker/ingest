@@ -176,6 +176,8 @@ export const killEvents = pgTable(
     killerId: uuid("killer_id").references(() => players.id),
     victimId: uuid("victim_id").references(() => players.id),
     totalVictimKillFame: bigint("total_victim_kill_fame", { mode: "number" }),
+    /** Estimated victim inventory silver at ingest (AODP cache). Juicy = ≥ 20m. */
+    lootEstSilver: bigint("loot_est_silver", { mode: "number" }),
     participantCount: integer("participant_count"),
     groupMemberCount: integer("group_member_count"),
     killerGuildAlbionId: text("killer_guild_albion_id"),
@@ -257,6 +259,12 @@ export const killEvents = pgTable(
       .on(t.region, t.victimGuildAlbionId, t.occurredAt)
       .where(
         sql`${t.totalVictimKillFame} > 0 AND ${t.victimGuildAlbionId} IS NOT NULL`
+      ),
+    /** Speeds /kills?juicy=1 (victim loot ≥ 20m silver). */
+    index("kill_events_juicy_occurred_idx")
+      .on(t.occurredAt, t.eventId)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.lootEstSilver} >= 20000000`
       ),
   ]
 );

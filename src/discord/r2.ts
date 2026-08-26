@@ -51,6 +51,22 @@ export function snapshotPublicUrl(
   return `${snapshotCdnBase()}/${region}/${eventId}-${digest}.png`;
 }
 
+export function battleSnapshotObjectKey(
+  region: string,
+  battleId: number,
+  digest: string
+): string {
+  return `snapshots/${region}/battle-${battleId}-${digest}.png`;
+}
+
+export function battleSnapshotPublicUrl(
+  region: string,
+  battleId: number,
+  digest: string
+): string {
+  return `${snapshotCdnBase()}/${region}/battle-${battleId}-${digest}.png`;
+}
+
 function pngDigest(body: Buffer): string {
   return createHash("sha256").update(body).digest("hex").slice(0, 12);
 }
@@ -73,4 +89,24 @@ export async function uploadSnapshotPng(
     })
   );
   return snapshotPublicUrl(region, eventId, digest);
+}
+
+export async function uploadBattleSnapshotPng(
+  region: string,
+  battleId: number,
+  body: Buffer
+): Promise<string> {
+  const bucket = requireEnv("R2_BUCKET_NAME");
+  const digest = pngDigest(body);
+  const key = battleSnapshotObjectKey(region, battleId, digest);
+  await r2Client().send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentType: "image/png",
+      CacheControl: "public, max-age=31536000, immutable",
+    })
+  );
+  return battleSnapshotPublicUrl(region, battleId, digest);
 }

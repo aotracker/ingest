@@ -4,13 +4,18 @@ import { isDiscordEnabled } from "./enabled";
 import {
   clearPostClaim,
   feedFilters,
+  findMatchingBattleFeeds,
   findMatchingFeedsForKill,
   hasPostedMessage,
   tryClaimPost,
   type DiscordFeedRow,
 } from "./db";
-import { enqueueNotifyDiscord } from "./jobs";
-import { FEED_GUILD_DEATHS, FEED_GUILD_KILLS, killEventKey } from "./types";
+import { enqueueNotifyDiscord, enqueueNotifyDiscordBattle } from "./jobs";
+import { DEFAULT_BATTLE_FEED_MIN_PLAYERS, killEventKey } from "./types";
+import {
+  guildInBattle,
+  type BattleSnapshot,
+} from "./battle-data";
 
 function guildId(player: AlbionEvent["Killer"]): string | null {
   const id = player?.GuildId?.trim();
@@ -106,5 +111,47 @@ export async function emitKillIngested(
       if (claimed) await clearPostClaim(feed.id, eventKey);
       throw err;
     }
+  }
+}
+
+function battleNotifyCutoff(feed: DiscordFeedRow): Date {
+  const filters = feedFilters(feed);
+  if (filters.notifyAfter) {
+    const stamped = new Date(filters.notifyAfter);
+    if (!Number.isNaN(stamped.getTime())) return stamped;
+  }
+  return feed.createdAt;
+}
+
+export async function emitBattleIngested(
+  region: AlbionRegion,
+  albionBattleId: number,
+  hint?: BattleSnapshot
+): Promise<void> {
+  if (!isDiscordEnabled()) return;
+  if (!Number.isFinite(albionBattleId) || albionBattleId <= 0) return;
+
+  const feeds = await findMatchingBattleFeeds({ region });
+  if (feeds.length === 0) return;
+
+  const snapshot = hint ?? null;
+  for (const feed of feeds) {
+    if (!feed.channelId) continue;
+    const filters = feedFilters(feed);
+    if (filters.paused) continue;
+    if (snapshot) {
+      const minPlayers = filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS;
+      if (snapshot.totalPlayers < minPlayers) continue;
+      if (!guildInBattle(snapshot, feed.targetAlbionId, feed.targetName)) {
+        continue;
+      }
+      const occurredAt = snapshot.startTime ?? snapshot.endTime;
+      if (occurredAt && occurredAt < battleNotifyCutoff(feed)) continue;
+    }
+    await enqueueNotifyDiscordBattle({
+      feedId: feed.id,
+      region,
+      battleId: albionBattleId,
+    });
   }
 }

@@ -63,6 +63,7 @@ import {
 import { toBigInt } from "@aotracker/core/utils";
 import { ensureBattleDetailQueued } from "./jobs/enqueue";
 import { sortEventsOldestFirst } from "./discord/order";
+import { estimateItemsSilver } from "./discord/silver";
 
 const DEFAULT_EVENT_BATCH_CONCURRENCY = 3;
 
@@ -797,6 +798,20 @@ type KillParticipantRow = {
   items: KillEventItemInsert[];
 };
 
+async function estimateVictimLootSilver(
+  region: AlbionRegion,
+  items: KillEventItemInsert[]
+): Promise<number> {
+  const loot = items.filter((item) => item.category === "inventory");
+  if (loot.length === 0) return 0;
+  try {
+    const silver = await estimateItemsSilver(region, loot);
+    return Number.isFinite(silver) && silver > 0 ? Math.floor(silver) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function resolveKillParticipantRows(
   region: AlbionRegion,
   participantInserts: KillEventParticipantInsert[],
@@ -1007,12 +1022,17 @@ export async function upsertKillEventDetail(
   });
 
   const { participantInserts } = collectKillEventRelations(event);
-  const { rows: participantRows, killerId, victimId } =
-    await resolveKillParticipantRows(
-      region,
-      participantInserts,
-      options?.entityCache
-    );
+  const victimItems =
+    participantInserts.find((row) => row.role === "victim")?.items ?? [];
+  const [{ rows: participantRows, killerId, victimId }, lootEstSilver] =
+    await Promise.all([
+      resolveKillParticipantRows(
+        region,
+        participantInserts,
+        options?.entityCache
+      ),
+      estimateVictimLootSilver(region, victimItems),
+    ]);
 
   let battleUuid: string | null = null;
   if (event.BattleId) {
@@ -1053,6 +1073,7 @@ export async function upsertKillEventDetail(
     killerId,
     victimId,
     totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
+    lootEstSilver,
     participantCount: counts.participantCount,
     groupMemberCount: counts.groupMemberCount,
     killerGuildAlbionId: event.Killer?.GuildId?.trim() || null,
@@ -1882,7 +1903,24 @@ export async function ingestRecentBattles(region: AlbionRegion): Promise<{
       totalFame: battle.totalFame,
     });
 
-    await upsertBattleFromRecentList(region, battle);
+    const upsertedId = await upsertBattleFromRecentList(region, battle);
+
+    if (upsertedId != null) {
+      try {
+        const { emitBattleIngested } = await import("./discord/dispatcher");
+        const { snapshotFromAlbionBattle } = await import("./discord/battle-data");
+        await emitBattleIngested(
+          region,
+          albionBattleId,
+          snapshotFromAlbionBattle(region, albionBattleId, battle)
+        );
+      } catch (err) {
+        console.error(
+          `[ingest] Failed to enqueue discord battle notify for ${region}/${albionBattleId}:`,
+          err
+        );
+      }
+    }
 
     if (
       fame <= RECENT_BATTLES_MIN_FAME ||

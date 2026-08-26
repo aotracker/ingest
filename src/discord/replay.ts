@@ -5,6 +5,7 @@ import {
   feedFilters,
   findMatchingFeeds,
   hasPostedMessage,
+  listPostableFeeds,
   recordPostedMessage,
   tryClaimPost,
   type DiscordFeedRow,
@@ -13,12 +14,15 @@ import { killMeetsFeedFilters } from "./kill-filters";
 import { loadKillSnapshot } from "./kill-data";
 import { postKillToFeed } from "./poster";
 import {
+  FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
   killEventKey,
   skippedFilterMessageId,
   type DiscordFeedType,
 } from "./types";
+import { sampleBattleSnapshot } from "./battle-data";
+import { postOrEditBattlePreview } from "./battle-poster";
 
 function recordSkippedFilter(
   feedId: string,
@@ -119,6 +123,50 @@ export async function postKillToMatchingFeeds(input: {
       pingRoleId: feedFilters(feed).pingRoleId,
     });
     posted.push({ feedType: feed.feedType, channelId: feed.channelId });
+  }
+
+  return { posted, skipped };
+}
+
+export async function postBattlePreviewToMatchingFeeds(input?: {
+  feedType?: DiscordFeedType;
+}): Promise<{
+  posted: { feedType: string; channelId: string; edited: boolean }[];
+  skipped: string[];
+}> {
+  if (!discordBotToken()) {
+    throw new Error("DISCORD_BOT_TOKEN is not set");
+  }
+
+  const feeds = (await listPostableFeeds()).filter(
+    (feed) => feed.feedType === FEED_GUILD_BATTLES
+  );
+  const posted: { feedType: string; channelId: string; edited: boolean }[] = [];
+  const skipped: string[] = [];
+
+  for (const feed of feeds) {
+    if (input?.feedType && feed.feedType !== input.feedType) continue;
+    if (!feed.channelId) {
+      skipped.push(`${feed.feedType}: no channel set`);
+      continue;
+    }
+    const snapshot = sampleBattleSnapshot({
+      region: feed.region,
+      trackedGuildId: feed.targetAlbionId,
+      trackedGuildName: feed.targetName,
+    });
+    const result = await postOrEditBattlePreview({
+      feedId: feed.id,
+      channelId: feed.channelId,
+      snapshot,
+      trackedGuildId: feed.targetAlbionId,
+      trackedGuildName: feed.targetName,
+    });
+    posted.push({
+      feedType: feed.feedType,
+      channelId: feed.channelId,
+      edited: result.edited,
+    });
   }
 
   return { posted, skipped };

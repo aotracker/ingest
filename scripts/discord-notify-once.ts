@@ -1,9 +1,10 @@
 /**
- * Post an existing Postgres kill to Discord feeds (local testing).
+ * Post an existing Postgres kill to Discord feeds, or a battle preview (local testing).
  *
  *   npm run discord:notify-once
  *   npm run discord:notify-once -- --region europe --event 417638879
- *   npm run discord:notify-once -- --region europe --event 417638879 --force
+ *   npm run discord:notify-once -- --feed battles
+ *   npm run discord:notify-once -- --feed battles --preview
  *   npm run discord:notify-once -- --list
  */
 import {
@@ -15,8 +16,12 @@ import {
   findLatestKillForFeeds,
   listPostableFeeds,
 } from "../src/discord/db";
-import { postKillToMatchingFeeds } from "../src/discord/replay";
-import { FEED_GUILD_DEATHS, FEED_GUILD_KILLS } from "../src/discord/types";
+import { postBattlePreviewToMatchingFeeds, postKillToMatchingFeeds } from "../src/discord/replay";
+import {
+  FEED_GUILD_BATTLES,
+  FEED_GUILD_DEATHS,
+  FEED_GUILD_KILLS,
+} from "../src/discord/types";
 
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -63,8 +68,9 @@ function parseFeedType(raw: string | undefined) {
   if (!raw) return undefined;
   if (raw === "kills" || raw === FEED_GUILD_KILLS) return FEED_GUILD_KILLS;
   if (raw === "deaths" || raw === FEED_GUILD_DEATHS) return FEED_GUILD_DEATHS;
+  if (raw === "battles" || raw === FEED_GUILD_BATTLES) return FEED_GUILD_BATTLES;
   console.error(
-    `[discord:notify-once] Invalid --feed="${raw}". Use kills or deaths`
+    `[discord:notify-once] Invalid --feed="${raw}". Use kills, deaths, or battles`
   );
   process.exit(1);
 }
@@ -86,7 +92,7 @@ async function main(): Promise<void> {
 
   if (feeds.length === 0) {
     throw new Error(
-      "No Discord feeds with a channel set. Invite the bot, then /track, /kills-channel, and /deaths-channel."
+      "No Discord feeds with a channel set. Invite the bot, then /track and set a channel."
     );
   }
 
@@ -94,6 +100,28 @@ async function main(): Promise<void> {
   const eventFlag = parseEventId(option("event"));
   const feedType = parseFeedType(option("feed"));
   const force = flag("force");
+  const previewBattles =
+    feedType === FEED_GUILD_BATTLES || flag("preview");
+
+  if (previewBattles && eventFlag == null) {
+    const result = await postBattlePreviewToMatchingFeeds({
+      feedType: FEED_GUILD_BATTLES,
+    });
+    for (const skip of result.skipped) {
+      console.log(`[discord:notify-once] skipped ${skip}`);
+    }
+    for (const post of result.posted) {
+      console.log(
+        `[discord:notify-once] ${post.edited ? "edited" : "posted"} battle preview ${post.feedType} to channel ${post.channelId}`
+      );
+    }
+    if (result.posted.length === 0) {
+      throw new Error(
+        "No guild_battles feed with a channel set. Set a battles channel on Account → Discord, then retry."
+      );
+    }
+    return;
+  }
 
   let region = regionFlag;
   let eventId = eventFlag;

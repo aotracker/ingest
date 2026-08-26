@@ -9,8 +9,15 @@ import { killEventKey, skippedFilterMessageId } from "./types";
 export async function handleNotifyDiscord(payload: {
   region?: AlbionRegion;
   eventId?: number;
+  battleId?: number;
   feedId?: string;
 }): Promise<void> {
+  if (payload.battleId != null) {
+    const { handleNotifyDiscordBattle } = await import("./notify-battle");
+    await handleNotifyDiscordBattle(payload);
+    return;
+  }
+
   if (!isDiscordEnabled()) return;
   if (!payload.region || payload.eventId == null || !payload.feedId) {
     throw new Error("notify-discord requires region, eventId, and feedId");

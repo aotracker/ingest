@@ -3,8 +3,10 @@ import { alias } from "drizzle-orm/pg-core";
 import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { db, schema } from "@aotracker/core/db";
 import {
+  FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
+  GUILD_FEED_TYPES,
   parseFilters,
   type DiscordFeedFilters,
   type DiscordFeedType,
@@ -40,10 +42,61 @@ export async function upsertDiscordServer(
 export async function listFeedsForServer(
   discordGuildId: string
 ): Promise<DiscordFeedRow[]> {
+  const rows = await db
+    .select()
+    .from(schema.discordFeeds)
+    .where(eq(schema.discordFeeds.discordGuildId, discordGuildId));
+  await ensureGuildBattlesFeedFromRows(discordGuildId, rows);
+  if (rows.some((row) => row.feedType === FEED_GUILD_BATTLES)) return rows;
   return db
     .select()
     .from(schema.discordFeeds)
     .where(eq(schema.discordFeeds.discordGuildId, discordGuildId));
+}
+
+async function ensureGuildBattlesFeedFromRows(
+  discordGuildId: string,
+  rows: DiscordFeedRow[]
+): Promise<void> {
+  const source = rows.find(
+    (row) =>
+      row.feedType === FEED_GUILD_KILLS || row.feedType === FEED_GUILD_DEATHS
+  );
+  if (!source) return;
+  if (rows.some((row) => row.feedType === FEED_GUILD_BATTLES)) return;
+
+  const now = new Date();
+  await db
+    .insert(schema.discordFeeds)
+    .values({
+      discordGuildId,
+      feedType: FEED_GUILD_BATTLES,
+      targetType: source.targetType,
+      targetAlbionId: source.targetAlbionId,
+      region: source.region,
+      targetName: source.targetName,
+      createdByUserId: source.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+}
+
+export async function findMatchingBattleFeeds(input: {
+  region: AlbionRegion;
+}): Promise<DiscordFeedRow[]> {
+  return db
+    .select()
+    .from(schema.discordFeeds)
+    .where(
+      and(
+        eq(schema.discordFeeds.feedType, FEED_GUILD_BATTLES),
+        eq(schema.discordFeeds.targetType, "guild"),
+        eq(schema.discordFeeds.region, input.region),
+        eq(schema.discordFeeds.enabled, 1),
+        isNotNull(schema.discordFeeds.channelId)
+      )
+    );
 }
 
 export async function findMatchingFeeds(input: {
@@ -116,10 +169,7 @@ export async function listActiveGuildFeedTargets(): Promise<
       and(
         eq(schema.discordFeeds.targetType, "guild"),
         eq(schema.discordFeeds.enabled, 1),
-        inArray(schema.discordFeeds.feedType, [
-          FEED_GUILD_KILLS,
-          FEED_GUILD_DEATHS,
-        ])
+        inArray(schema.discordFeeds.feedType, [...GUILD_FEED_TYPES])
       )
     );
   return rows;
@@ -253,9 +303,8 @@ export async function trackGuildFeeds(input: {
   await upsertDiscordServer(input.discordGuildId, input.discordGuildName);
 
   const existing = await listFeedsForServer(input.discordGuildId);
-  const prior = existing.filter(
-    (row) =>
-      row.feedType === FEED_GUILD_KILLS || row.feedType === FEED_GUILD_DEATHS
+  const prior = existing.filter((row) =>
+    (GUILD_FEED_TYPES as readonly string[]).includes(row.feedType)
   );
   const replaced =
     prior.length > 0 &&
@@ -271,10 +320,7 @@ export async function trackGuildFeeds(input: {
       .where(
         and(
           eq(schema.discordFeeds.discordGuildId, input.discordGuildId),
-          inArray(schema.discordFeeds.feedType, [
-            FEED_GUILD_KILLS,
-            FEED_GUILD_DEATHS,
-          ])
+          inArray(schema.discordFeeds.feedType, [...GUILD_FEED_TYPES])
         )
       );
   }
@@ -295,6 +341,17 @@ export async function trackGuildFeeds(input: {
     {
       discordGuildId: input.discordGuildId,
       feedType: FEED_GUILD_DEATHS,
+      targetType: "guild",
+      targetAlbionId: input.albionGuildId,
+      region: input.region,
+      targetName: input.albionGuildName,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      discordGuildId: input.discordGuildId,
+      feedType: FEED_GUILD_BATTLES,
       targetType: "guild",
       targetAlbionId: input.albionGuildId,
       region: input.region,
@@ -345,10 +402,7 @@ export async function untrackGuildFeeds(discordGuildId: string): Promise<number>
     .where(
       and(
         eq(schema.discordFeeds.discordGuildId, discordGuildId),
-        inArray(schema.discordFeeds.feedType, [
-          FEED_GUILD_KILLS,
-          FEED_GUILD_DEATHS,
-        ])
+        inArray(schema.discordFeeds.feedType, [...GUILD_FEED_TYPES])
       )
     )
     .returning({ id: schema.discordFeeds.id });
@@ -376,13 +430,44 @@ export async function recordPostedMessage(
 ): Promise<void> {
   await db
     .update(schema.discordPostLog)
-    .set({ discordMessageId })
+    .set({ discordMessageId, postedAt: new Date() })
     .where(
       and(
         eq(schema.discordPostLog.feedId, feedId),
         eq(schema.discordPostLog.eventKey, eventKey)
       )
     );
+}
+
+export async function getPostedMessage(
+  feedId: string,
+  eventKey: string
+): Promise<string | null> {
+  const [row] = await db
+    .select({ discordMessageId: schema.discordPostLog.discordMessageId })
+    .from(schema.discordPostLog)
+    .where(
+      and(
+        eq(schema.discordPostLog.feedId, feedId),
+        eq(schema.discordPostLog.eventKey, eventKey)
+      )
+    )
+    .limit(1);
+  return row?.discordMessageId ?? null;
+}
+
+export async function upsertPostedMessage(
+  feedId: string,
+  eventKey: string,
+  discordMessageId: string | null
+): Promise<void> {
+  await db
+    .insert(schema.discordPostLog)
+    .values({ feedId, eventKey, discordMessageId })
+    .onConflictDoUpdate({
+      target: [schema.discordPostLog.feedId, schema.discordPostLog.eventKey],
+      set: { discordMessageId, postedAt: new Date() },
+    });
 }
 
 export async function hasPostedMessage(
@@ -437,8 +522,8 @@ export async function findLatestKillForFeeds(
   const victim = alias(schema.killParticipants, "discord_replay_victim");
   const killerGuildId = sql`COALESCE(${killer.guildAlbionId}, ${killer.rawPayload}->>'GuildId')`;
   const victimGuildId = sql`COALESCE(${victim.guildAlbionId}, ${victim.rawPayload}->>'GuildId')`;
-  const match = or(
-    ...feeds.map((feed) => {
+  const matchParts = feeds
+    .map((feed) => {
       if (feed.feedType === FEED_GUILD_KILLS) {
         return and(
           eq(schema.killEvents.region, feed.region),
@@ -446,12 +531,15 @@ export async function findLatestKillForFeeds(
           sql`${killerGuildId} IS DISTINCT FROM ${victimGuildId}`
         );
       }
+      if (feed.feedType !== FEED_GUILD_DEATHS) return undefined;
       return and(
         eq(schema.killEvents.region, feed.region),
         sql`${victimGuildId} = ${feed.targetAlbionId}`
       );
     })
-  );
+    .filter((part): part is NonNullable<typeof part> => part != null);
+  if (matchParts.length === 0) return null;
+  const match = or(...matchParts);
 
   const [row] = await db
     .select({
@@ -511,6 +599,8 @@ function applyFilterPatch(
     const value = patch[key];
     if (value == null || value === false || (Array.isArray(value) && value.length === 0)) {
       delete next[key];
+    } else if (key === "minPlayers" && typeof value === "number") {
+      next.minPlayers = Math.min(500, Math.max(1, Math.floor(value)));
     } else {
       Object.assign(next, { [key]: value });
     }

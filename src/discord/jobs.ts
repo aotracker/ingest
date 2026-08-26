@@ -19,3 +19,27 @@ export async function enqueueNotifyDiscord(input: {
     maxAttempts: 5,
   });
 }
+
+export async function enqueueNotifyDiscordBattle(input: {
+  feedId: string;
+  region: AlbionRegion;
+  battleId: number;
+  delayMs?: number;
+}): Promise<void> {
+  const delayMs = input.delayMs ?? 0;
+  await enqueueJob({
+    queue: QUEUE_NAMES.DISCORD,
+    name: "notify-discord",
+    dedupeKey:
+      delayMs > 0
+        ? `notify-discord-battle-wait-${input.feedId}-${input.region}-${input.battleId}-${Date.now()}`
+        : `notify-discord-battle-${input.feedId}-${input.region}-${input.battleId}`,
+    payload: {
+      region: input.region,
+      battleId: input.battleId,
+      feedId: input.feedId,
+    },
+    delayMs,
+    maxAttempts: 5,
+  });
+}

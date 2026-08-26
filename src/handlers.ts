@@ -130,6 +130,33 @@ export async function executeJob(
           `Battle detail failed to persist (${payload.region}/${payload.battleId})`
         );
       }
+      try {
+        const { emitBattleIngested } = await import("./discord/dispatcher");
+        const { snapshotFromAlbionBattle } = await import("./discord/battle-data");
+        const detail = cached.detailPayload as { guilds?: unknown } | null;
+        const raw = cached.rawPayload as {
+          guilds?: unknown;
+          startTime?: string;
+          endTime?: string;
+        } | null;
+        await emitBattleIngested(
+          payload.region,
+          payload.battleId,
+          snapshotFromAlbionBattle(payload.region, payload.battleId, {
+            startTime: cached.startTime,
+            endTime: cached.endTime,
+            totalPlayers: cached.totalPlayers,
+            totalKills: cached.totalKills,
+            totalFame: cached.totalFame,
+            guilds: detail?.guilds ?? raw?.guilds,
+          })
+        );
+      } catch (err) {
+        console.error(
+          `[ingest] Failed to enqueue discord battle notify for ${payload.region}/${payload.battleId}:`,
+          err
+        );
+      }
       return;
     }
     case "notify-discord": {
