@@ -1,11 +1,18 @@
 /**
  * Store estimated victim-inventory silver on kill_events, backfill from
  * kill_items + item_market_prices, then add the juicy-kills partial index.
- * Usage: npm run db:apply-kill-loot-silver (from ingest/, OVH VM or local)
+ *
+ * Walks 1-hour slices (newest first) so each UPDATE uses occurred_at range
+ * scans instead of re-finding NULL rows from "now" every batch.
+ *
+ * Usage (from ingest/, OVH VM or local):
+ *   npm run db:apply-kill-loot-silver
+ *   npm run db:reprice-loot-silver
  */
 import postgres from "postgres";
 
-const BACKFILL_BATCH = 2000;
+const LOOKBACK_HOURS = 40 * 24;
+const HOUR_MS = 60 * 60 * 1000;
 const reprice = process.argv.includes("--reprice");
 
 async function createIndex(sql: postgres.Sql, statement: string) {
@@ -21,90 +28,94 @@ async function createIndex(sql: postgres.Sql, statement: string) {
   }
 }
 
+async function priceHour(
+  sql: postgres.Sql,
+  hourStart: Date,
+  hourEnd: Date,
+  onlyNull: boolean
+) {
+  return sql<{ id: string }[]>`
+    WITH priced AS (
+      SELECT
+        ke.id,
+        COALESCE(SUM(
+          COALESCE(ki.count, 1) * COALESCE(imp.unit_price, imp_q1.unit_price, 0)
+        ), 0)::bigint AS total
+      FROM kill_events ke
+      LEFT JOIN kill_items ki
+        ON ki.event_id = ke.id
+        AND ki.owner_role = 'victim'
+        AND ki.category = 'inventory'
+      LEFT JOIN item_market_prices imp
+        ON imp.region = ke.region
+        AND imp.item_id = ki.item_type
+        AND imp.quality = GREATEST(
+          1,
+          LEAST(5, COALESCE(NULLIF(ki.quality, 0), 1))
+        )
+      LEFT JOIN item_market_prices imp_q1
+        ON imp_q1.region = ke.region
+        AND imp_q1.item_id = ki.item_type
+        AND imp_q1.quality = 1
+      WHERE ke.detail_evicted_at IS NULL
+        AND ke.occurred_at >= ${hourStart}
+        AND ke.occurred_at < ${hourEnd}
+        AND (${onlyNull} = false OR ke.loot_est_silver IS NULL)
+      GROUP BY ke.id
+    )
+    UPDATE kill_events ke
+    SET loot_est_silver = priced.total
+    FROM priced
+    WHERE ke.id = priced.id
+    RETURNING ke.id
+  `;
+}
+
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required");
 
   const sql = postgres(url, { max: 1 });
   try {
+    await sql.unsafe(`SET statement_timeout = 0`);
     await sql.unsafe(`
       ALTER TABLE "kill_events" ADD COLUMN IF NOT EXISTS "loot_est_silver" bigint
     `);
     console.log("kill_events.loot_est_silver ready.");
 
+    const [{ end_at: windowEnd }] = await sql<[{ end_at: Date }]>`
+      SELECT date_trunc('hour', NOW()) + INTERVAL '1 hour' AS end_at
+    `;
+    const windowStart = new Date(windowEnd.getTime() - LOOKBACK_HOURS * HOUR_MS);
+    const onlyNull = !reprice;
+    let backfilled = 0;
+    let hours = 0;
+
     if (reprice) {
-      const reset = await sql.unsafe(`
-        UPDATE kill_events ke
-        SET loot_est_silver = NULL
-        WHERE ke.detail_evicted_at IS NULL
-          AND ke.occurred_at >= NOW() - INTERVAL '40 days'
-          AND EXISTS (
-            SELECT 1
-            FROM kill_items ki
-            WHERE ki.event_id = ke.id
-              AND ki.owner_role = 'victim'
-              AND ki.category = 'inventory'
-          )
-      `);
-      console.log(`loot silver reprice: reset ${reset.count} rows`);
+      console.log(
+        `loot silver reprice: ${LOOKBACK_HOURS} hour slices, newest first`
+      );
     }
 
-    let backfilled = 0;
-    for (;;) {
-      const updated = await sql.unsafe(`
-        WITH batch AS (
-          SELECT ke.id
-          FROM kill_events ke
-          WHERE ke.loot_est_silver IS NULL
-            AND ke.detail_evicted_at IS NULL
-            AND ke.occurred_at >= NOW() - INTERVAL '40 days'
-            AND EXISTS (
-              SELECT 1
-              FROM kill_items ki
-              WHERE ki.event_id = ke.id
-                AND ki.owner_role = 'victim'
-                AND ki.category = 'inventory'
-            )
-          ORDER BY ke.occurred_at DESC
-          LIMIT ${BACKFILL_BATCH}
-        ),
-        priced AS (
-          SELECT
-            batch.id,
-            COALESCE(SUM(
-              COALESCE(ki.count, 1) * COALESCE(imp.unit_price, imp_q1.unit_price, 0)
-            ), 0)::bigint AS total
-          FROM batch
-          LEFT JOIN kill_items ki
-            ON ki.event_id = batch.id
-            AND ki.owner_role = 'victim'
-            AND ki.category = 'inventory'
-          LEFT JOIN kill_events ke
-            ON ke.id = batch.id
-          LEFT JOIN item_market_prices imp
-            ON imp.region = ke.region
-            AND imp.item_id = ki.item_type
-            AND imp.quality = GREATEST(
-              1,
-              LEAST(5, COALESCE(NULLIF(ki.quality, 0), 1))
-            )
-          LEFT JOIN item_market_prices imp_q1
-            ON imp_q1.region = ke.region
-            AND imp_q1.item_id = ki.item_type
-            AND imp_q1.quality = 1
-          GROUP BY batch.id
-        )
-        UPDATE kill_events ke
-        SET loot_est_silver = priced.total
-        FROM priced
-        WHERE ke.id = priced.id
-        RETURNING ke.id
-      `);
-      const count = updated.length;
-      if (count === 0) break;
-      backfilled += count;
-      console.log(`loot silver backfill: ${backfilled} rows`);
+    for (
+      let hourEnd = windowEnd;
+      hourEnd > windowStart;
+      hourEnd = new Date(hourEnd.getTime() - HOUR_MS)
+    ) {
+      const hourStart = new Date(
+        Math.max(windowStart.getTime(), hourEnd.getTime() - HOUR_MS)
+      );
+      const updated = await priceHour(sql, hourStart, hourEnd, onlyNull);
+      hours += 1;
+      backfilled += updated.length;
+      if (updated.length > 0 || hours % 24 === 0) {
+        console.log(
+          `loot silver backfill: ${backfilled} rows through ${hourStart.toISOString()} (${hours}/${LOOKBACK_HOURS}h)`
+        );
+      }
     }
+
+    console.log(`loot silver backfill done: ${backfilled} rows`);
 
     await createIndex(
       sql,
