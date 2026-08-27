@@ -16,6 +16,7 @@ const PAIRS = [
   "src/lib/db/sync.ts",
   "src/lib/db/retention.ts",
   "src/lib/db/queries-ingest.ts",
+  "src/lib/market/aggregate-unit-prices.ts",
 ];
 
 if (!existsSync(join(clientRoot, "package.json"))) {

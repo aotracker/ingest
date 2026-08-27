@@ -178,6 +178,8 @@ export const killEvents = pgTable(
     totalVictimKillFame: bigint("total_victim_kill_fame", { mode: "number" }),
     /** Estimated victim inventory silver at ingest (AODP cache). Juicy = ≥ 20m. */
     lootEstSilver: bigint("loot_est_silver", { mode: "number" }),
+    /** Estimated victim equipped-gear silver at ingest (AODP cache). */
+    gearEstSilver: bigint("gear_est_silver", { mode: "number" }),
     participantCount: integer("participant_count"),
     groupMemberCount: integer("group_member_count"),
     killerGuildAlbionId: text("killer_guild_albion_id"),

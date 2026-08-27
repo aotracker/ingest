@@ -798,14 +798,15 @@ type KillParticipantRow = {
   items: KillEventItemInsert[];
 };
 
-async function estimateVictimLootSilver(
+async function estimateVictimSilver(
   region: AlbionRegion,
-  items: KillEventItemInsert[]
+  items: KillEventItemInsert[],
+  category: "inventory" | "equipment"
 ): Promise<number> {
-  const loot = items.filter((item) => item.category === "inventory");
-  if (loot.length === 0) return 0;
+  const subset = items.filter((item) => item.category === category);
+  if (subset.length === 0) return 0;
   try {
-    const silver = await estimateItemsSilver(region, loot);
+    const silver = await estimateItemsSilver(region, subset);
     return Number.isFinite(silver) && silver > 0 ? Math.floor(silver) : 0;
   } catch {
     return 0;
@@ -1024,15 +1025,19 @@ export async function upsertKillEventDetail(
   const { participantInserts } = collectKillEventRelations(event);
   const victimItems =
     participantInserts.find((row) => row.role === "victim")?.items ?? [];
-  const [{ rows: participantRows, killerId, victimId }, lootEstSilver] =
-    await Promise.all([
-      resolveKillParticipantRows(
-        region,
-        participantInserts,
-        options?.entityCache
-      ),
-      estimateVictimLootSilver(region, victimItems),
-    ]);
+  const [
+    { rows: participantRows, killerId, victimId },
+    lootEstSilver,
+    gearEstSilver,
+  ] = await Promise.all([
+    resolveKillParticipantRows(
+      region,
+      participantInserts,
+      options?.entityCache
+    ),
+    estimateVictimSilver(region, victimItems, "inventory"),
+    estimateVictimSilver(region, victimItems, "equipment"),
+  ]);
 
   let battleUuid: string | null = null;
   if (event.BattleId) {
@@ -1074,6 +1079,7 @@ export async function upsertKillEventDetail(
     victimId,
     totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
     lootEstSilver,
+    gearEstSilver,
     participantCount: counts.participantCount,
     groupMemberCount: counts.groupMemberCount,
     killerGuildAlbionId: event.Killer?.GuildId?.trim() || null,

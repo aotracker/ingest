@@ -8,7 +8,7 @@ import {
   aggregateUnitPrices,
   priceKey,
   type AodpPriceRow,
-} from "../../../client/src/lib/market/aggregate-unit-prices";
+} from "../../src/lib/market/aggregate-unit-prices";
 
 const AODP_BASE_URLS: Record<string, string> = {
   americas: "https://west.albion-online-data.com",
