@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   battleFingerprint,
+  battleMeetsMinGuildPlayers,
   battleScoreboardRows,
   guildInBattle,
   parseBattleGuildScores,
@@ -92,6 +93,15 @@ describe("guildInBattle", () => {
 
   it("falls back to name", () => {
     expect(guildInBattle(snapshot(), "missing", "rivals")?.id).toBe("g2");
+  });
+});
+
+describe("battleMeetsMinGuildPlayers", () => {
+  it("uses the tracked guild player count, not the battle total", () => {
+    const fight = snapshot({ totalPlayers: 80 });
+    expect(battleMeetsMinGuildPlayers(fight, "g1", 20, "Elevate")).toBe(true);
+    expect(battleMeetsMinGuildPlayers(fight, "g1", 21, "Elevate")).toBe(false);
+    expect(battleMeetsMinGuildPlayers(fight, "missing", 1)).toBe(false);
   });
 });
 

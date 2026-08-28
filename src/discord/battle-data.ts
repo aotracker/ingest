@@ -93,6 +93,16 @@ export function guildInBattle(
   );
 }
 
+export function battleMeetsMinGuildPlayers(
+  snapshot: BattleSnapshot,
+  guildAlbionId: string,
+  minPlayers: number,
+  guildName?: string | null
+): boolean {
+  const tracked = guildInBattle(snapshot, guildAlbionId, guildName);
+  return Boolean(tracked && tracked.players >= minPlayers);
+}
+
 export function battleFingerprint(snapshot: BattleSnapshot): string {
   const top = snapshot.guilds
     .slice(0, 12)

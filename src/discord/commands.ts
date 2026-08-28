@@ -158,7 +158,7 @@ export const slashCommandBuilders = [
     .addIntegerOption((option) =>
       option
         .setName("min-players")
-        .setDescription("Minimum battle size (players). Used by the battles feed.")
+        .setDescription("Minimum tracked-guild players in the battle. Used by the battles feed.")
         .setMinValue(1)
         .setMaxValue(500)
     )
@@ -554,7 +554,7 @@ function formatFilterLine(filters: DiscordFeedFilters): string {
 function formatBattleFilterLine(filters: DiscordFeedFilters): string {
   const parts = [
     filters.paused ? "paused" : "active",
-    `min players ${filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
+    `min guild players ${filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
     filters.createThread ? "thread" : "no thread",
   ];
   if (filters.pingRoleId) parts.push(`ping <@&${filters.pingRoleId}>`);
@@ -635,7 +635,7 @@ async function handleFeedFilters(
       `Paused: ${next.paused ? "yes" : "no"}`,
       `Min fame: ${next.minFame ?? 0}`,
       `Min silver: ${next.minSilver ?? 0}`,
-      `Min players: ${next.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
+      `Min guild players: ${next.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS}`,
       `Thread per battle: ${next.createThread ? "yes" : "no"}`,
       `Content: ${next.contentTypes?.length ? next.contentTypes.join(", ") : "all"}`,
     ].join("\n"),

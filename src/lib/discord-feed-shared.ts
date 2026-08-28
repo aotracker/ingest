@@ -10,7 +10,7 @@ export const GUILD_FEED_TYPES = [
 
 export type DiscordFeedType = (typeof GUILD_FEED_TYPES)[number];
 
-/** Default battle size floor when minPlayers is unset. */
+/** Default tracked-guild player floor when minPlayers is unset. */
 export const DEFAULT_BATTLE_FEED_MIN_PLAYERS = 20;
 export const MAX_BATTLE_FEED_MIN_PLAYERS = 500;
 
@@ -22,7 +22,7 @@ export type DiscordFeedFilters = {
   paused?: boolean;
   /** ISO timestamp: do not Discord-notify events that occurred before this. */
   notifyAfter?: string;
-  /** Post guild battle summaries only when totalPlayers >= this. */
+  /** Post guild battle recaps only when the tracked guild has this many players in the fight. */
   minPlayers?: number;
   /** Start a Discord thread on the first battle summary message. */
   createThread?: boolean;

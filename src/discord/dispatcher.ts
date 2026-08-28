@@ -14,7 +14,7 @@ import { enqueueNotifyDiscord, enqueueNotifyDiscordBattle } from "./jobs";
 import { DEFAULT_BATTLE_FEED_MIN_PLAYERS, killEventKey } from "./types";
 import { feedPassesSyncFilters, notifyCutoff } from "./kill-filters";
 import {
-  guildInBattle,
+  battleMeetsMinGuildPlayers,
   type BattleSnapshot,
 } from "./battle-data";
 
@@ -108,8 +108,14 @@ export async function emitBattleIngested(
     if (filters.paused) continue;
     if (snapshot) {
       const minPlayers = filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS;
-      if (snapshot.totalPlayers < minPlayers) continue;
-      if (!guildInBattle(snapshot, feed.targetAlbionId, feed.targetName)) {
+      if (
+        !battleMeetsMinGuildPlayers(
+          snapshot,
+          feed.targetAlbionId,
+          minPlayers,
+          feed.targetName
+        )
+      ) {
         continue;
       }
       const occurredAt = snapshot.startTime ?? snapshot.endTime;

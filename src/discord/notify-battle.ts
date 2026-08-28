@@ -94,7 +94,7 @@ export async function handleNotifyDiscordBattle(payload: {
   if (!tracked) return;
 
   const minPlayers = filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS;
-  if (snapshot.totalPlayers < minPlayers) return;
+  if (tracked.players < minPlayers) return;
 
   const occurredAt = snapshot.startTime ?? snapshot.endTime;
   if (occurredAt && occurredAt < notifyCutoff(feed)) {
@@ -137,8 +137,12 @@ export async function handleNotifyDiscordBattle(payload: {
 
   await refreshBattleListFromAlbion(payload.region, payload.battleId);
   snapshot = (await loadBattleSnapshot(payload.region, payload.battleId)) ?? snapshot;
-  if (!guildInBattle(snapshot, feed.targetAlbionId, feed.targetName)) return;
-  if (snapshot.totalPlayers < minPlayers) return;
+  const trackedAfter = guildInBattle(
+    snapshot,
+    feed.targetAlbionId,
+    feed.targetName
+  );
+  if (!trackedAfter || trackedAfter.players < minPlayers) return;
   fingerprint = battleFingerprint(snapshot);
   seenAt = await rememberFingerprint(
     feed.id,
