@@ -2,14 +2,10 @@
  * Claimed Albion characters for signed-in site users.
  * Usage: npm run db:apply-user-claimed-characters (from ingest/)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       CREATE TABLE IF NOT EXISTS "user_claimed_characters" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -34,9 +30,7 @@ async function main() {
         ON "user_claimed_characters" ("user_id");
     `);
     console.log("user_claimed_characters ready.");
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 main().catch((err) => {

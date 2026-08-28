@@ -3,14 +3,10 @@
  * Ingest writes participant_id without restoring that FK (retention deletes by event_id).
  * Usage: npm run db:apply-kill-participant-columns (from ingest/, OVH VM or local)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       ALTER TABLE "kill_participants" ADD COLUMN IF NOT EXISTS "guild_albion_id" text;
       ALTER TABLE "kill_participants" ADD COLUMN IF NOT EXISTS "alliance_id" text;
@@ -20,9 +16,7 @@ async function main() {
       ALTER TABLE "kill_items" DROP CONSTRAINT IF EXISTS "kill_items_participant_id_kill_participants_id_fk";
     `);
     console.log("kill_participants storage columns and kill_items FK drop applied.");
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 main().catch((err) => {

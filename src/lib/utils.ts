@@ -8,6 +8,11 @@ export function formatFame(value: number | null | undefined): string {
   return value.toLocaleString();
 }
 
+/** Compact silver formatter (same scale labels as fame). */
+export function formatSilver(value: number | null | undefined): string {
+  return formatFame(value);
+}
+
 export function regionLabel(region: string): string {
   const labels: Record<string, string> = {
     americas: "Americas",

@@ -25,15 +25,7 @@ import {
   isPostedDiscordMessageId,
   skippedFilterMessageId,
 } from "./types";
-
-function notifyCutoff(feed: { createdAt: Date; filters: unknown }): Date {
-  const filters = feedFilters(feed as Parameters<typeof feedFilters>[0]);
-  if (filters.notifyAfter) {
-    const stamped = new Date(filters.notifyAfter);
-    if (!Number.isNaN(stamped.getTime())) return stamped;
-  }
-  return feed.createdAt;
-}
+import { notifyCutoff } from "./kill-filters";
 
 async function rememberFingerprint(
   feedId: string,

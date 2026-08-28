@@ -2,14 +2,10 @@
  * Create Discord bot tables (servers, feeds, post log).
  * Usage: npm run db:apply-discord-bot (from ingest/, OVH VM or local dev)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       CREATE TABLE IF NOT EXISTS "discord_servers" (
         "discord_guild_id" text PRIMARY KEY NOT NULL,
@@ -62,9 +58,7 @@ async function main() {
         ON "discord_post_log" ("feed_id","event_key");
     `);
     console.log("discord_servers / discord_feeds / discord_post_log ready.");
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 main().catch((err) => {

@@ -7,9 +7,11 @@ import {
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
   GUILD_FEED_TYPES,
+  applyFeedFilterPatch,
   parseFilters,
   type DiscordFeedFilters,
   type DiscordFeedType,
+  type FeedFilterPatch,
 } from "./types";
 
 export type DiscordFeedRow = typeof schema.discordFeeds.$inferSelect;
@@ -568,7 +570,7 @@ export function feedFilters(feed: DiscordFeedRow): DiscordFeedFilters {
 
 export async function updateFeedFilters(
   discordGuildId: string,
-  patch: DiscordFeedFilters,
+  patch: FeedFilterPatch,
   feedTypes?: DiscordFeedType[]
 ): Promise<number> {
   const feeds = await listFeedsForServer(discordGuildId);
@@ -580,7 +582,7 @@ export async function updateFeedFilters(
   const now = new Date();
   let updated = 0;
   for (const feed of targets) {
-    const next = applyFilterPatch(feedFilters(feed), patch);
+    const next = applyFeedFilterPatch(feedFilters(feed), patch);
     await db
       .update(schema.discordFeeds)
       .set({ filters: next, updatedAt: now })
@@ -588,24 +590,6 @@ export async function updateFeedFilters(
     updated += 1;
   }
   return updated;
-}
-
-function applyFilterPatch(
-  current: DiscordFeedFilters,
-  patch: DiscordFeedFilters
-): DiscordFeedFilters {
-  const next: DiscordFeedFilters = { ...current };
-  for (const key of Object.keys(patch) as (keyof DiscordFeedFilters)[]) {
-    const value = patch[key];
-    if (value == null || value === false || (Array.isArray(value) && value.length === 0)) {
-      delete next[key];
-    } else if (key === "minPlayers" && typeof value === "number") {
-      next.minPlayers = Math.min(500, Math.max(1, Math.floor(value)));
-    } else {
-      Object.assign(next, { [key]: value });
-    }
-  }
-  return next;
 }
 
 export async function listPlayerAlbionIdsForGuild(

@@ -3,6 +3,7 @@
  * Usage: npm run db:apply-kill-leaderboard-idx (from ingest/, OVH VM or local)
  */
 import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function createIndex(sql: postgres.Sql, statement: string) {
   try {
@@ -18,11 +19,7 @@ async function createIndex(sql: postgres.Sql, statement: string) {
 }
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await createIndex(
       sql,
       `
@@ -43,9 +40,7 @@ async function main() {
       `
     );
     console.log("kill_events_lb_fame_idx applied.");
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
+  }, { endTimeout: 5 });
 }
 
 main().catch((err) => {

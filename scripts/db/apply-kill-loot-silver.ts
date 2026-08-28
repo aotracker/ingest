@@ -11,6 +11,7 @@
  *   npm run db:reprice-loot-silver
  */
 import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 const LOOKBACK_HOURS = 40 * 24;
 const HOUR_MS = 60 * 60 * 1000;
@@ -87,11 +88,7 @@ async function priceHour(
 }
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`SET statement_timeout = 0`);
     await sql.unsafe(`
       ALTER TABLE "kill_events" ADD COLUMN IF NOT EXISTS "loot_est_silver" bigint
@@ -145,9 +142,7 @@ async function main() {
       `
     );
     console.log("kill_events_juicy_occurred_idx applied.");
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
+  }, { endTimeout: 5 });
 }
 
 main().catch((err) => {

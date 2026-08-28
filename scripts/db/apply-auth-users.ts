@@ -3,14 +3,10 @@
  * user_watchlist_entries, user_recent_searches).
  * Usage: npm run db:apply-auth-users (from ingest/, OVH VM or local dev)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       CREATE TABLE IF NOT EXISTS "user" (
         "id" text PRIMARY KEY NOT NULL,
@@ -118,9 +114,7 @@ async function main() {
     console.log(
       "user / session / account / verification / user_watchlist_entries / user_recent_searches ready."
     );
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 main().catch((err) => {

@@ -3,16 +3,12 @@
  * participant rows so alliance feud avoids JSONB filters.
  * Usage: npm run db:apply-kill-victim-alliance-columns (from ingest/, OVH VM or local)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 const BACKFILL_BATCH = 2000;
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       ALTER TABLE "kill_events" ADD COLUMN IF NOT EXISTS "victim_alliance_albion_id" text;
       ALTER TABLE "kill_events" ADD COLUMN IF NOT EXISTS "victim_alliance_name" text
@@ -101,9 +97,7 @@ async function main() {
         `victim alliance participant backfill: ${participantBackfilled} rows`
       );
     }
-  } finally {
-    await sql.end({ timeout: 5 });
-  }
+  }, { endTimeout: 5 });
 }
 
 main().catch((err) => {

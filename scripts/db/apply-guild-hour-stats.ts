@@ -2,14 +2,10 @@
  * Create guild UTC-hour activity tables and backfill the last 30 days.
  * Usage: npm run db:apply-guild-hour-stats (from ingest/, OVH VM or local dev)
  */
-import postgres from "postgres";
+import { withDatabaseUrl } from "./with-database-url";
 
 async function main() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL is required");
-
-  const sql = postgres(url, { max: 1 });
-  try {
+  await withDatabaseUrl(async (sql) => {
     await sql.unsafe(`
       CREATE TABLE IF NOT EXISTS "guild_hour_stats" (
         "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -164,9 +160,7 @@ async function main() {
         fame = EXCLUDED.fame
     `);
     console.log("guild_hour_stats backfill complete.");
-  } finally {
-    await sql.end();
-  }
+  });
 }
 
 main().catch((err) => {

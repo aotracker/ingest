@@ -44,10 +44,12 @@ import {
   FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
+  applyFeedFilterPatch,
   parseFilters,
   DEFAULT_BATTLE_FEED_MIN_PLAYERS,
   type DiscordFeedFilters,
   type DiscordFeedType,
+  type FeedFilterPatch,
 } from "./types";
 
 function isRegion(value: string | null): value is AlbionRegion {
@@ -580,7 +582,7 @@ async function handleFeedFilters(
     return;
   }
 
-  const patch: DiscordFeedFilters = {};
+  const patch: FeedFilterPatch = {};
   const minFame = interaction.options.getInteger("min-fame");
   const minSilver = interaction.options.getInteger("min-silver");
   const content = interaction.options.getString("content");
@@ -589,26 +591,26 @@ async function handleFeedFilters(
   const createThread = interaction.options.getBoolean("create-thread");
 
   if (minFame != null) {
-    patch.minFame = minFame > 0 ? minFame : undefined;
+    patch.minFame = minFame > 0 ? minFame : null;
   }
   if (minSilver != null) {
-    patch.minSilver = minSilver > 0 ? minSilver : undefined;
+    patch.minSilver = minSilver > 0 ? minSilver : null;
   }
   if (content != null) {
     const types = content
       .split(/[,\s]+/)
       .map((value) => value.trim().toUpperCase())
       .filter((value) => value === "SOLO" || value === "GROUP" || value === "ZVZ");
-    patch.contentTypes = types.length > 0 ? types : undefined;
+    patch.contentTypes = types.length > 0 ? types : null;
   }
   if (paused != null) {
-    patch.paused = paused || undefined;
+    patch.paused = paused ? true : null;
   }
   if (minPlayers != null) {
-    patch.minPlayers = minPlayers;
+    patch.minPlayers = minPlayers > 0 ? minPlayers : null;
   }
   if (createThread != null) {
-    patch.createThread = createThread || undefined;
+    patch.createThread = createThread ? true : null;
   }
 
   if (Object.keys(patch).length === 0) {
@@ -625,7 +627,7 @@ async function handleFeedFilters(
     patch,
     feedTypesFromOption(interaction.options.getString("feed"))
   );
-  const next = { ...parseFilters(feeds[0]?.filters), ...patch };
+  const next = applyFeedFilterPatch(parseFilters(feeds[0]?.filters), patch);
   const scope = interaction.options.getString("feed") ?? "all";
   await interaction.reply({
     content: [
@@ -663,8 +665,8 @@ async function handlePingRole(
     return;
   }
 
-  const patch: DiscordFeedFilters = {
-    pingRoleId: clear || !role ? undefined : role.id,
+  const patch: FeedFilterPatch = {
+    pingRoleId: clear || !role ? null : role.id,
   };
   const updated = await updateFeedFilters(
     interaction.guildId!,

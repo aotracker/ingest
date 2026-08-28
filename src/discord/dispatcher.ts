@@ -12,6 +12,7 @@ import {
 } from "./db";
 import { enqueueNotifyDiscord, enqueueNotifyDiscordBattle } from "./jobs";
 import { DEFAULT_BATTLE_FEED_MIN_PLAYERS, killEventKey } from "./types";
+import { feedPassesSyncFilters, notifyCutoff } from "./kill-filters";
 import {
   guildInBattle,
   type BattleSnapshot,
@@ -25,35 +26,6 @@ function guildId(player: AlbionEvent["Killer"]): string | null {
 function eventOccurredAt(event: AlbionEvent): Date | null {
   const occurred = new Date(event.TimeStamp);
   return Number.isNaN(occurred.getTime()) ? null : occurred;
-}
-
-function notifyCutoff(feed: DiscordFeedRow): Date {
-  const filters = feedFilters(feed);
-  if (filters.notifyAfter) {
-    const stamped = new Date(filters.notifyAfter);
-    if (!Number.isNaN(stamped.getTime())) return stamped;
-  }
-  return feed.createdAt;
-}
-
-function passesFilters(
-  feed: DiscordFeedRow,
-  fame: number,
-  occurredAt: Date,
-  contentType?: string
-): boolean {
-  const filters = feedFilters(feed);
-  if (filters.paused) return false;
-  if (filters.minFame != null && fame < filters.minFame) return false;
-  if (
-    filters.contentTypes?.length &&
-    contentType &&
-    !filters.contentTypes.includes(contentType)
-  ) {
-    return false;
-  }
-  if (occurredAt < notifyCutoff(feed)) return false;
-  return true;
 }
 
 export async function emitKillIngested(
@@ -98,7 +70,11 @@ export async function emitKillIngested(
 
   for (const feed of matches) {
     if (!feed.channelId) continue;
-    if (!passesFilters(feed, fame, occurredAt, contentType)) continue;
+    if (
+      !feedPassesSyncFilters(feed, { fame, occurredAt, contentType }).ok
+    ) {
+      continue;
+    }
     if (await hasPostedMessage(feed.id, eventKey)) continue;
     const claimed = await tryClaimPost(feed.id, eventKey);
     try {
@@ -112,15 +88,6 @@ export async function emitKillIngested(
       throw err;
     }
   }
-}
-
-function battleNotifyCutoff(feed: DiscordFeedRow): Date {
-  const filters = feedFilters(feed);
-  if (filters.notifyAfter) {
-    const stamped = new Date(filters.notifyAfter);
-    if (!Number.isNaN(stamped.getTime())) return stamped;
-  }
-  return feed.createdAt;
 }
 
 export async function emitBattleIngested(
@@ -146,7 +113,7 @@ export async function emitBattleIngested(
         continue;
       }
       const occurredAt = snapshot.startTime ?? snapshot.endTime;
-      if (occurredAt && occurredAt < battleNotifyCutoff(feed)) continue;
+      if (occurredAt && occurredAt < notifyCutoff(feed)) continue;
     }
     await enqueueNotifyDiscordBattle({
       feedId: feed.id,
