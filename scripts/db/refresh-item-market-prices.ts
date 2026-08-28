@@ -1,7 +1,9 @@
 /**
  * Re-fetch AODP prices into item_market_prices using median aggregation
  * (drops troll sell orders like Thetford 100m T4_RUNE).
- * Usage: npm run db:refresh-item-market-prices (from ingest/)
+ * Usage (from ingest/):
+ *   npm run db:refresh-item-market-prices
+ *   npm run db:refresh-item-market-prices -- --region=europe,asia
  */
 import postgres from "postgres";
 import {
@@ -18,6 +20,31 @@ const AODP_BASE_URLS: Record<string, string> = {
 
 const MAX_URL_LENGTH = 4096;
 const QUALITIES = [1, 2, 3, 4, 5];
+const BATCH_DELAY_MS = 400;
+const REGION_DELAY_MS = 8_000;
+const MAX_RETRIES = 8;
+
+function parseRegionFilter(): string[] | null {
+  const arg = process.argv.find((entry) => entry.startsWith("--region="));
+  if (!arg) return null;
+  return arg
+    .slice("--region=".length)
+    .split(",")
+    .map((region) => region.trim())
+    .filter(Boolean);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(attempt: number, retryAfterHeader: string | null): number {
+  const fromHeader = retryAfterHeader ? Number.parseInt(retryAfterHeader, 10) : NaN;
+  if (Number.isFinite(fromHeader) && fromHeader > 0) {
+    return Math.min(fromHeader * 1000, 120_000);
+  }
+  return Math.min(5_000 * 2 ** attempt, 60_000);
+}
 
 function buildPricesUrl(
   baseUrl: string,
@@ -54,24 +81,46 @@ async function fetchBatch(
   itemIds: string[]
 ): Promise<AodpPriceRow[]> {
   const url = buildPricesUrl(baseUrl, itemIds, QUALITIES);
-  const response = await fetch(url, {
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok) {
-    throw new Error(`AODP HTTP ${response.status}: ${response.statusText}`);
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json" },
+    });
+    if (response.ok) {
+      const data = (await response.json()) as unknown;
+      return Array.isArray(data) ? (data as AodpPriceRow[]) : [];
+    }
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || attempt === MAX_RETRIES) {
+      throw new Error(`AODP HTTP ${response.status}: ${response.statusText}`);
+    }
+    const waitMs = retryDelayMs(attempt, response.headers.get("retry-after"));
+    console.log(
+      `AODP ${response.status}, retry ${attempt + 1}/${MAX_RETRIES} in ${Math.round(waitMs / 1000)}s`
+    );
+    await sleep(waitMs);
   }
-  const data = (await response.json()) as unknown;
-  return Array.isArray(data) ? (data as AodpPriceRow[]) : [];
+  throw new Error("AODP retries exhausted");
 }
 
 async function main() {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required");
 
+  const regionFilter = parseRegionFilter();
   const sql = postgres(url, { max: 1 });
   try {
-    const regions = Object.keys(AODP_BASE_URLS);
-    for (const region of regions) {
+    const regions = Object.keys(AODP_BASE_URLS).filter(
+      (region) => !regionFilter || regionFilter.includes(region)
+    );
+    if (regions.length === 0) {
+      throw new Error(
+        `No matching regions. Use --region=americas,europe,asia (got ${regionFilter?.join(",") ?? ""})`
+      );
+    }
+
+    for (const [index, region] of regions.entries()) {
+      if (index > 0) await sleep(REGION_DELAY_MS);
+
       const itemRows = await sql<{ item_id: string }[]>`
         SELECT DISTINCT item_id
         FROM item_market_prices
@@ -82,18 +131,20 @@ async function main() {
 
       const baseUrl = AODP_BASE_URLS[region];
       const allRows: AodpPriceRow[] = [];
-      for (const batch of batchItemIds(baseUrl, itemIds, QUALITIES)) {
+      const batches = batchItemIds(baseUrl, itemIds, QUALITIES);
+      for (const [batchIndex, batch] of batches.entries()) {
+        if (batchIndex > 0) await sleep(BATCH_DELAY_MS);
         allRows.push(...(await fetchBatch(baseUrl, batch)));
       }
 
       const prices = aggregateUnitPrices(allRows);
       const updatedAt = new Date();
       const upserts = [...prices.entries()].map(([key, unitPrice]) => {
-        const [itemId, qualityStr] = key.split(":");
+        const sep = key.lastIndexOf(":");
         return {
           region,
-          item_id: itemId,
-          quality: parseInt(qualityStr, 10),
+          item_id: key.slice(0, sep),
+          quality: parseInt(key.slice(sep + 1), 10),
           unit_price: unitPrice,
           updated_at: updatedAt,
         };
