@@ -209,7 +209,7 @@ export async function postOrEditBattlePreview(input: {
     trackedGuildName: input.trackedGuildName,
     preview: true,
   });
-  const components = battleLinkButtons(input.snapshot, true);
+  const components = battleLinkButtons(input.snapshot);
   const rest = restClient();
   const files = attachment ? [attachment] : undefined;
 

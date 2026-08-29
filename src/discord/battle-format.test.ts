@@ -8,7 +8,7 @@ import {
   sampleBattleSnapshot,
   type BattleSnapshot,
 } from "./battle-data";
-import { battleThreadName, buildBattleEmbed } from "./battle-format";
+import { battleLinkButtons, battleThreadName, buildBattleEmbed } from "./battle-format";
 import { isBattleSettled, remainingBattleSettleMs } from "./battle-settle";
 import { BATTLE_SETTLE_MS, DEFAULT_BATTLE_FEED_MIN_PLAYERS } from "./types";
 
@@ -224,14 +224,57 @@ describe("sampleBattleSnapshot", () => {
       trackedGuildName: "Elevate",
       preview: true,
     });
-    expect(embed.footer?.text).toContain("preview");
-    expect(embed.description).toContain("Preview");
-    expect(embed.title).toContain("recap");
+    expect(embed.title).toBe("Elevate battle recap");
+    expect(embed.url).toContain("/battle/europe/99");
+    expect(embed.description).toBeUndefined();
+    expect(embed.footer).toBeUndefined();
     expect(embed.fields).toBeUndefined();
+    const [row] = battleLinkButtons(sample);
+    expect(row?.components[0]).toMatchObject({
+      label: "View Battle on AOTracker",
+      url: embed.url,
+    });
+  });
+
+  it("links live recaps to the battle page", () => {
+    const embed = buildBattleEmbed({
+      snapshot: snapshot(),
+      trackedGuildId: "g1",
+      trackedGuildName: "Elevate",
+    });
+    expect(embed.title).toBe("Elevate battle recap");
+    expect(embed.url).toContain("/battle/americas/99");
+    expect(embed.description).toBeUndefined();
+    expect(embed.footer).toBeUndefined();
+  });
+
+  it("adds a button that opens the battle page", () => {
+    const [row] = battleLinkButtons(snapshot());
+    const button = row?.components[0];
+    expect(button).toMatchObject({
+      label: "View Battle on AOTracker",
+      url: expect.stringContaining("/battle/americas/99"),
+    });
   });
 });
 
 describe("renderBattleSnapshotPng", () => {
+  it("gives the scoreboard most of the frame", async () => {
+    const { buildBattleSnapshotSvg } = await import("./battle-snapshot");
+    const svg = buildBattleSnapshotSvg({
+      snapshot: sampleBattleSnapshot({
+        region: "americas",
+        trackedGuildId: "abc",
+        trackedGuildName: "Elevate",
+      }),
+      trackedGuildId: "abc",
+      trackedGuildName: "Elevate",
+    });
+    expect(svg).toContain('y="108" width="1128"');
+    expect(svg).toContain('font-size="30"');
+    expect(svg).not.toContain('font-size="44"');
+  });
+
   it("renders a png recap", async () => {
     const { renderBattleSnapshotPng } = await import("./battle-snapshot");
     const png = await renderBattleSnapshotPng({

@@ -1,8 +1,10 @@
 /**
- * Post an existing Postgres kill to Discord feeds, or a battle preview (local testing).
+ * Post an existing Postgres kill or battle to Discord feeds, or a battle preview.
  *
  *   npm run discord:notify-once
  *   npm run discord:notify-once -- --region europe --event 417638879
+ *   npm run discord:notify-once -- --region americas --battle 1437247679 --force
+ *   npm run discord:notify-once -- --feed battles --region americas --event 1437247679
  *   npm run discord:notify-once -- --feed battles
  *   npm run discord:notify-once -- --feed battles --preview
  *   npm run discord:notify-once -- --list
@@ -16,7 +18,13 @@ import {
   findLatestKillForFeeds,
   listPostableFeeds,
 } from "../src/discord/db";
-import { postBattlePreviewToMatchingFeeds, postKillToMatchingFeeds } from "../src/discord/replay";
+import { loadBattleSnapshot } from "../src/discord/battle-data";
+import { loadKillSnapshot } from "../src/discord/kill-data";
+import {
+  postBattlePreviewToMatchingFeeds,
+  postBattleToMatchingFeeds,
+  postKillToMatchingFeeds,
+} from "../src/discord/replay";
 import {
   FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
@@ -54,14 +62,14 @@ function parseRegion(raw: string | undefined): AlbionRegion | undefined {
   return value as AlbionRegion;
 }
 
-function parseEventId(raw: string | undefined): number | undefined {
+function parseId(raw: string | undefined, flag: string): number | undefined {
   if (!raw) return undefined;
-  const eventId = Number.parseInt(raw, 10);
-  if (!Number.isFinite(eventId) || eventId <= 0) {
-    console.error(`[discord:notify-once] Invalid --event="${raw}"`);
+  const id = Number.parseInt(raw, 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    console.error(`[discord:notify-once] Invalid --${flag}="${raw}"`);
     process.exit(1);
   }
-  return eventId;
+  return id;
 }
 
 function parseFeedType(raw: string | undefined) {
@@ -97,13 +105,39 @@ async function main(): Promise<void> {
   }
 
   const regionFlag = parseRegion(option("region"));
-  const eventFlag = parseEventId(option("event"));
+  const eventFlag = parseId(option("event"), "event");
+  const battleFlag = parseId(option("battle"), "battle");
   const feedType = parseFeedType(option("feed"));
   const force = flag("force");
-  const previewBattles =
-    feedType === FEED_GUILD_BATTLES || flag("preview");
+  const previewBattles = flag("preview") || (
+    feedType === FEED_GUILD_BATTLES &&
+    eventFlag == null &&
+    battleFlag == null
+  );
 
-  if (previewBattles && eventFlag == null) {
+  const battleId =
+    battleFlag ??
+    (feedType === FEED_GUILD_BATTLES && eventFlag != null
+      ? eventFlag
+      : undefined);
+
+  if (battleId != null) {
+    if (!regionFlag) {
+      throw new Error("Pass --region with --battle");
+    }
+    await reportBattlePosts(
+      await postBattleToMatchingFeeds({
+        region: regionFlag,
+        battleId,
+        force,
+      }),
+      regionFlag,
+      battleId
+    );
+    return;
+  }
+
+  if (previewBattles) {
     const result = await postBattlePreviewToMatchingFeeds({
       feedType: FEED_GUILD_BATTLES,
     });
@@ -149,6 +183,29 @@ async function main(): Promise<void> {
     );
   }
 
+  const kill = await loadKillSnapshot(region!, eventId!);
+  if (!kill?.detailSyncedAt) {
+    const battle = await loadBattleSnapshot(region!, eventId!);
+    if (battle) {
+      console.log(
+        `[discord:notify-once] ${region}/${eventId} is a battle, not a kill`
+      );
+      await reportBattlePosts(
+        await postBattleToMatchingFeeds({
+          region: region!,
+          battleId: eventId!,
+          force,
+        }),
+        region!,
+        eventId!
+      );
+      return;
+    }
+    throw new Error(
+      `Kill ${region}/${eventId} is not in Postgres yet. If this is a battle, pass --battle ${eventId}.`
+    );
+  }
+
   const result = await postKillToMatchingFeeds({
     region: region!,
     eventId: eventId!,
@@ -159,6 +216,34 @@ async function main(): Promise<void> {
   if (result.posted.length === 0 && result.skipped.length === 0) {
     throw new Error(
       `No feeds matched ${region}/${eventId}. Check /track region + guild, and that this kill involves that guild.`
+    );
+  }
+
+  for (const skip of result.skipped) {
+    console.log(`[discord:notify-once] skipped ${skip}`);
+  }
+  for (const post of result.posted) {
+    console.log(
+      `[discord:notify-once] posted ${post.feedType} to channel ${post.channelId}`
+    );
+  }
+
+  if (result.posted.length === 0) {
+    process.exitCode = 1;
+  }
+}
+
+async function reportBattlePosts(
+  result: {
+    posted: { feedType: string; channelId: string }[];
+    skipped: string[];
+  },
+  region: AlbionRegion,
+  battleId: number
+): Promise<void> {
+  if (result.posted.length === 0 && result.skipped.length === 0) {
+    throw new Error(
+      `No guild_battles feeds matched ${region}/${battleId}. Check /track region + guild, and that this battle involves that guild.`
     );
   }
 

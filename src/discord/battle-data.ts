@@ -1,5 +1,9 @@
+import { getAlbionClient } from "@aotracker/core/albion/client";
 import type { AlbionRegion } from "@aotracker/core/albion/types";
-import { getBattleByAlbionId } from "@aotracker/core/db/battle-cache";
+import {
+  getBattleByAlbionId,
+  upsertBattleFromRecentList,
+} from "@aotracker/core/db/battle-cache";
 
 export type BattleGuildScore = {
   id: string;
@@ -142,6 +146,27 @@ export function battleScoreboardRows(
   return [...top.slice(0, limit - 1), tracked];
 }
 
+export async function refreshBattleListFromAlbion(
+  region: AlbionRegion,
+  battleId: number
+): Promise<BattleSnapshot | null> {
+  try {
+    const battle = await getAlbionClient().getBattle(region, battleId);
+    if (!battle) return null;
+    await upsertBattleFromRecentList(region, battle);
+    return (
+      (await loadBattleSnapshot(region, battleId)) ??
+      snapshotFromAlbionBattle(region, battleId, battle)
+    );
+  } catch (err) {
+    console.warn(
+      `[discord] battle recap refresh skipped for ${region}/${battleId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
 export async function loadBattleSnapshot(
   region: AlbionRegion,
   albionBattleId: number
@@ -223,7 +248,7 @@ export function sampleBattleSnapshot(input: {
   const name = input.trackedGuildName?.trim() || "Your guild";
   return {
     region: input.region,
-    albionBattleId: 0,
+    albionBattleId: 99,
     startTime: new Date(),
     endTime: null,
     totalPlayers: 84,

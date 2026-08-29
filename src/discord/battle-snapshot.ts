@@ -16,6 +16,15 @@ const WIDTH = 1200;
 const HEIGHT = 630;
 const SITE_NAME = "AOTracker";
 
+/** Compact chrome so the scoreboard can own the frame. */
+const TABLE_Y = 108;
+const TABLE_X = 36;
+const TABLE_W = 1128;
+const ROW_H = 108;
+const ROW_START = 210;
+const NAME_SIZE = 30;
+const STAT_SIZE = 28;
+
 const COLOR = {
   kill: "#3dd68c",
   death: "#e85d5d",
@@ -68,33 +77,45 @@ export function battleImageSubtitle(snapshot: BattleSnapshot): string {
     .join(" · ");
 }
 
+function identityLine(input: {
+  snapshot: BattleSnapshot;
+  trackedName: string;
+}): string {
+  const { snapshot } = input;
+  const battle =
+    snapshot.albionBattleId > 0
+      ? `#${snapshot.albionBattleId}`
+      : `${input.trackedName} recap`;
+  return [battle, battleImageSubtitle(snapshot)].join(" · ");
+}
+
 function cell(
   guild: BattleGuildScore,
   y: number,
   highlight: boolean
 ): string {
-  const nameFill = highlight ? COLOR.highlight : COLOR.text;
+  const nameFill = highlight ? COLOR.highlight : COLOR.fg;
   const rowBg = highlight
-    ? `<rect x="84" y="${y - 28}" width="1032" height="48" rx="8" fill="rgba(245,193,74,0.12)"/>`
+    ? `<rect x="56" y="${y - 48}" width="1088" height="96" rx="10" fill="rgba(245,193,74,0.14)"/>`
     : "";
   return `
     ${rowBg}
-    ${svgText(truncate(guild.name, 16), 100, y, 22, nameFill, 'font-weight="600"')}
-    ${svgText(truncate(guild.alliance?.trim() || "—", 16), 330, y, 20, COLOR.muted)}
-    ${svgText((guild.players > 0 ? guild.players : 0).toLocaleString(), 560, y, 22, COLOR.text, 'text-anchor="end" font-weight="600"')}
-    ${svgText(guild.kills.toLocaleString(), 680, y, 22, COLOR.kill, 'text-anchor="end" font-weight="600"')}
-    ${svgText(guild.deaths.toLocaleString(), 800, y, 22, COLOR.death, 'text-anchor="end" font-weight="600"')}
-    ${svgText(formatItemPower(guild.averageIp), 920, y, 22, COLOR.ip, 'text-anchor="end" font-weight="600"')}
-    ${svgText(formatFame(guild.killFame), 1090, y, 22, COLOR.fame, 'text-anchor="end" font-weight="600"')}
+    ${svgText(truncate(guild.name, 18), 72, y, NAME_SIZE, nameFill, 'font-weight="700"')}
+    ${svgText(truncate(guild.alliance?.trim() || "—", 16), 360, y, 24, COLOR.muted)}
+    ${svgText((guild.players > 0 ? guild.players : 0).toLocaleString(), 580, y, STAT_SIZE, COLOR.text, 'text-anchor="end" font-weight="700"')}
+    ${svgText(guild.kills.toLocaleString(), 710, y, STAT_SIZE, COLOR.kill, 'text-anchor="end" font-weight="700"')}
+    ${svgText(guild.deaths.toLocaleString(), 840, y, STAT_SIZE, COLOR.death, 'text-anchor="end" font-weight="700"')}
+    ${svgText(formatItemPower(guild.averageIp), 970, y, STAT_SIZE, COLOR.ip, 'text-anchor="end" font-weight="700"')}
+    ${svgText(formatFame(guild.killFame), 1136, y, STAT_SIZE, COLOR.fame, 'text-anchor="end" font-weight="700"')}
   `;
 }
 
-export async function renderBattleSnapshotPng(input: {
+export function buildBattleSnapshotSvg(input: {
   snapshot: BattleSnapshot;
   trackedGuildId: string;
   trackedGuildName?: string | null;
   preview?: boolean;
-}): Promise<Buffer> {
+}): string {
   const { snapshot } = input;
   const tracked = guildInBattle(
     snapshot,
@@ -106,23 +127,19 @@ export async function renderBattleSnapshotPng(input: {
     input.trackedGuildId,
     input.trackedGuildName
   );
-  const title =
-    snapshot.albionBattleId > 0
-      ? `Albion Battle #${snapshot.albionBattleId}`
-      : `${tracked?.name ?? input.trackedGuildName ?? "Guild"} recap`;
-  const subtitle = input.preview
-    ? `Preview · ${battleImageSubtitle(snapshot)}`
-    : battleImageSubtitle(snapshot);
+  const trackedName = tracked?.name ?? input.trackedGuildName ?? "Guild";
+  const identity = identityLine({
+    snapshot,
+    trackedName,
+  });
   const badge = input.preview ? "Preview" : "Albion Battle";
-  const headerY = 118;
-  const tableY = 310;
-  const rowStart = 410;
+  const tableH = HEIGHT - TABLE_Y - 28;
 
   const rowSvg = rows
     .map((guild, index) =>
       cell(
         guild,
-        rowStart + index * 48,
+        ROW_START + index * ROW_H,
         Boolean(
           tracked &&
             (guild.id === tracked.id || guild.name === tracked.name)
@@ -131,7 +148,7 @@ export async function renderBattleSnapshotPng(input: {
     )
     .join("");
 
-  const svg = Buffer.from(`
+  return `
     <svg width="${WIDTH}" height="${HEIGHT}" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -141,23 +158,28 @@ export async function renderBattleSnapshotPng(input: {
         </linearGradient>
       </defs>
       <rect width="100%" height="100%" fill="url(#bg)"/>
-      ${svgText(SITE_NAME, 56, 78, 26, COLOR.fg, 'font-weight="700"')}
-      <rect x="980" y="50" width="164" height="40" rx="20" fill="none" stroke="${COLOR.border}"/>
-      ${svgText(badge, 1062, 76, 18, COLOR.muted, 'text-anchor="middle"')}
-      ${svgText(title, 56, headerY + 40, 44, COLOR.fg, 'font-weight="700"')}
-      ${svgText(subtitle, 56, headerY + 78, 22, COLOR.muted)}
-      <rect x="56" y="${tableY}" width="1088" height="${Math.max(220, 70 + rows.length * 48)}" rx="16" fill="rgba(12,15,20,0.55)" stroke="${COLOR.border}"/>
-      ${svgText("Guilds", 84, tableY + 36, 22, COLOR.fg, 'font-weight="700"')}
-      ${svgText("GUILD", 100, tableY + 70, 14, COLOR.muted, 'font-weight="600"')}
-      ${svgText("ALLIANCE", 330, tableY + 70, 14, COLOR.muted, 'font-weight="600"')}
-      ${svgText("PLAYERS", 560, tableY + 70, 14, COLOR.muted, 'text-anchor="end" font-weight="600"')}
-      ${svgText("KILLS", 680, tableY + 70, 14, COLOR.kill, 'text-anchor="end" font-weight="600"')}
-      ${svgText("DEATHS", 800, tableY + 70, 14, COLOR.death, 'text-anchor="end" font-weight="600"')}
-      ${svgText("AVG IP", 920, tableY + 70, 14, COLOR.ip, 'text-anchor="end" font-weight="600"')}
-      ${svgText("FAME", 1090, tableY + 70, 14, COLOR.fame, 'text-anchor="end" font-weight="600"')}
+      ${svgText(SITE_NAME, 44, 48, 20, COLOR.fg, 'font-weight="700"')}
+      <rect x="1000" y="22" width="156" height="34" rx="17" fill="none" stroke="${COLOR.border}"/>
+      ${svgText(badge, 1078, 45, 15, COLOR.muted, 'text-anchor="middle"')}
+      ${svgText(identity, 44, 82, 20, COLOR.muted)}
+      <rect x="${TABLE_X}" y="${TABLE_Y}" width="${TABLE_W}" height="${tableH}" rx="16" fill="rgba(12,15,20,0.55)" stroke="${COLOR.border}"/>
+      ${svgText("GUILD", 72, 148, 15, COLOR.muted, 'font-weight="600"')}
+      ${svgText("ALLIANCE", 360, 148, 15, COLOR.muted, 'font-weight="600"')}
+      ${svgText("PLAYERS", 580, 148, 15, COLOR.muted, 'text-anchor="end" font-weight="600"')}
+      ${svgText("KILLS", 710, 148, 15, COLOR.kill, 'text-anchor="end" font-weight="600"')}
+      ${svgText("DEATHS", 840, 148, 15, COLOR.death, 'text-anchor="end" font-weight="600"')}
+      ${svgText("AVG IP", 970, 148, 15, COLOR.ip, 'text-anchor="end" font-weight="600"')}
+      ${svgText("FAME", 1136, 148, 15, COLOR.fame, 'text-anchor="end" font-weight="600"')}
       ${rowSvg}
     </svg>
-  `);
+  `;
+}
 
-  return sharp(svg).png().toBuffer();
+export async function renderBattleSnapshotPng(input: {
+  snapshot: BattleSnapshot;
+  trackedGuildId: string;
+  trackedGuildName?: string | null;
+  preview?: boolean;
+}): Promise<Buffer> {
+  return sharp(Buffer.from(buildBattleSnapshotSvg(input))).png().toBuffer();
 }

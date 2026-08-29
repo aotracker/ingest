@@ -12,6 +12,7 @@ import {
   battleFingerprint,
   guildInBattle,
   loadBattleSnapshot,
+  refreshBattleListFromAlbion,
 } from "./battle-data";
 import { isBattleSettled, remainingBattleSettleMs } from "./battle-settle";
 import { postBattleToFeed } from "./battle-poster";
@@ -42,25 +43,6 @@ async function rememberFingerprint(
   await upsertPostedMessage(feedId, fpKey, fingerprint);
   await upsertPostedMessage(feedId, seenKey, seenAt);
   return seenAt;
-}
-
-async function refreshBattleListFromAlbion(
-  region: AlbionRegion,
-  battleId: number
-): Promise<void> {
-  try {
-    const { getAlbionClient } = await import("@aotracker/core/albion/client");
-    const { upsertBattleFromRecentList } = await import(
-      "@aotracker/core/db/battle-cache"
-    );
-    const battle = await getAlbionClient().getBattle(region, battleId);
-    if (battle) await upsertBattleFromRecentList(region, battle);
-  } catch (err) {
-    console.warn(
-      `[discord] battle recap refresh skipped for ${region}/${battleId}:`,
-      err instanceof Error ? err.message : err
-    );
-  }
 }
 
 export async function handleNotifyDiscordBattle(payload: {
@@ -135,8 +117,9 @@ export async function handleNotifyDiscordBattle(payload: {
     return;
   }
 
-  await refreshBattleListFromAlbion(payload.region, payload.battleId);
-  snapshot = (await loadBattleSnapshot(payload.region, payload.battleId)) ?? snapshot;
+  snapshot =
+    (await refreshBattleListFromAlbion(payload.region, payload.battleId)) ??
+    snapshot;
   const trackedAfter = guildInBattle(
     snapshot,
     feed.targetAlbionId,

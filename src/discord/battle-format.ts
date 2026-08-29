@@ -5,20 +5,13 @@ import {
   type APIEmbed,
 } from "discord-api-types/v10";
 import { appPublicUrl } from "./enabled";
-import { formatFame, formatUtcStamp, regionLabel } from "./format";
 import type { BattleSnapshot } from "./battle-data";
 import { guildInBattle } from "./battle-data";
 
 const COLOR_BATTLE = 0xd4a84b;
+const VIEW_BATTLE_LABEL = "View Battle on AOTracker";
 
-export function battlePageUrl(
-  region: string,
-  battleId: number,
-  preview = false
-): string {
-  if (preview || battleId <= 0) {
-    return `${appPublicUrl()}/battles?region=${encodeURIComponent(region)}`;
-  }
+export function battlePageUrl(region: string, battleId: number): string {
   return `${appPublicUrl()}/battle/${region}/${battleId}`;
 }
 
@@ -30,39 +23,17 @@ export function buildBattleEmbed(input: {
   imageUrl?: string;
 }): APIEmbed {
   const { snapshot } = input;
-  const preview = Boolean(input.preview);
   const tracked = guildInBattle(
     snapshot,
     input.trackedGuildId,
     input.trackedGuildName
   );
-  const url = battlePageUrl(snapshot.region, snapshot.albionBattleId, preview);
   const guildLabel = tracked?.name ?? input.trackedGuildName ?? "Tracked guild";
-  const when = snapshot.startTime
-    ? formatUtcStamp(snapshot.startTime)
-    : "Unknown time";
-
-  const description = [
-    preview ? "**Preview** — sample recap, not a real fight." : null,
-    `${regionLabel(snapshot.region)} · ${when}`,
-    `${snapshot.totalPlayers.toLocaleString()} players · ${snapshot.totalKills.toLocaleString()} kills · ${formatFame(snapshot.totalFame)} fame`,
-    tracked
-      ? `**${tracked.name}**  ${tracked.kills}/${tracked.deaths}  ${formatFame(tracked.killFame)} fame${tracked.players > 0 ? `  ${tracked.players} players` : ""}`
-      : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
 
   const embed: APIEmbed = {
     color: COLOR_BATTLE,
-    title: preview ? `${guildLabel} battle recap` : `${guildLabel} battle recap`,
-    url,
-    description,
-    footer: {
-      text: preview
-        ? "AOTracker · preview (not a live battle)"
-        : "AOTracker · battle recap",
-    },
+    title: `${guildLabel} battle recap`,
+    url: battlePageUrl(snapshot.region, snapshot.albionBattleId),
   };
   if (input.imageUrl) {
     embed.image = { url: input.imageUrl };
@@ -70,16 +41,13 @@ export function buildBattleEmbed(input: {
   return embed;
 }
 
-export function battleLinkButtons(
-  snapshot: BattleSnapshot,
-  preview = false
-) {
+export function battleLinkButtons(snapshot: BattleSnapshot) {
   const buttons: APIButtonComponent[] = [
     {
       type: ComponentType.Button,
       style: ButtonStyle.Link,
-      label: preview ? "Battles on AOTracker" : "Battle page",
-      url: battlePageUrl(snapshot.region, snapshot.albionBattleId, preview),
+      label: VIEW_BATTLE_LABEL,
+      url: battlePageUrl(snapshot.region, snapshot.albionBattleId),
     },
   ];
   return [{ type: ComponentType.ActionRow, components: buttons }];

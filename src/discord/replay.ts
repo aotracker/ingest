@@ -3,26 +3,37 @@ import { discordBotToken } from "./enabled";
 import {
   clearPostClaim,
   feedFilters,
+  findMatchingBattleFeeds,
   findMatchingFeeds,
+  getPostedMessage,
   hasPostedMessage,
   listPostableFeeds,
   recordPostedMessage,
   tryClaimPost,
   type DiscordFeedRow,
 } from "./db";
-import { killMeetsFeedFilters } from "./kill-filters";
+import { killMeetsFeedFilters, notifyCutoff } from "./kill-filters";
 import { loadKillSnapshot } from "./kill-data";
 import { postKillToFeed } from "./poster";
 import {
+  DEFAULT_BATTLE_FEED_MIN_PLAYERS,
   FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
+  battleEventKey,
+  battleThreadKey,
+  isPostedDiscordMessageId,
   killEventKey,
   skippedFilterMessageId,
   type DiscordFeedType,
 } from "./types";
-import { sampleBattleSnapshot } from "./battle-data";
-import { postOrEditBattlePreview } from "./battle-poster";
+import {
+  guildInBattle,
+  loadBattleSnapshot,
+  refreshBattleListFromAlbion,
+  sampleBattleSnapshot,
+} from "./battle-data";
+import { postBattleToFeed, postOrEditBattlePreview } from "./battle-poster";
 
 function recordSkippedFilter(
   feedId: string,
@@ -121,6 +132,106 @@ export async function postKillToMatchingFeeds(input: {
       eventKey,
       snapshot,
       pingRoleId: feedFilters(feed).pingRoleId,
+    });
+    posted.push({ feedType: feed.feedType, channelId: feed.channelId });
+  }
+
+  return { posted, skipped };
+}
+
+export async function postBattleToMatchingFeeds(input: {
+  region: AlbionRegion;
+  battleId: number;
+  force?: boolean;
+}): Promise<{
+  posted: { feedType: string; channelId: string }[];
+  skipped: string[];
+}> {
+  if (!discordBotToken()) {
+    throw new Error("DISCORD_BOT_TOKEN is not set");
+  }
+
+  const snapshot =
+    (await loadBattleSnapshot(input.region, input.battleId)) ??
+    (await refreshBattleListFromAlbion(input.region, input.battleId));
+  if (!snapshot) {
+    throw new Error(
+      `Battle ${input.region}/${input.battleId} is not in Postgres yet`
+    );
+  }
+
+  const feeds = await findMatchingBattleFeeds({ region: input.region });
+  const eventKey = battleEventKey(input.region, input.battleId);
+  const threadKey = battleThreadKey(input.region, input.battleId);
+  const posted: { feedType: string; channelId: string }[] = [];
+  const skipped: string[] = [];
+
+  for (const feed of feeds) {
+    if (!feed.channelId) {
+      skipped.push(`${feed.feedType}: no channel set`);
+      continue;
+    }
+
+    const filters = feedFilters(feed);
+    if (filters.paused) {
+      skipped.push(`${feed.feedType}: filtered out (paused)`);
+      continue;
+    }
+
+    const tracked = guildInBattle(
+      snapshot,
+      feed.targetAlbionId,
+      feed.targetName
+    );
+    if (!tracked) {
+      skipped.push(`${feed.feedType}: tracked guild not in this battle`);
+      continue;
+    }
+
+    const minPlayers = filters.minPlayers ?? DEFAULT_BATTLE_FEED_MIN_PLAYERS;
+    if (tracked.players < minPlayers) {
+      skipped.push(
+        `${feed.feedType}: filtered out (min-players ${tracked.players} < ${minPlayers})`
+      );
+      if (!input.force) {
+        await tryClaimPost(feed.id, eventKey);
+        await recordSkippedFilter(feed.id, eventKey, "min-players");
+      }
+      continue;
+    }
+
+    const occurredAt = snapshot.startTime ?? snapshot.endTime;
+    if (
+      !input.force &&
+      occurredAt &&
+      occurredAt < notifyCutoff(feed)
+    ) {
+      skipped.push(`${feed.feedType}: filtered out (too-old)`);
+      await tryClaimPost(feed.id, eventKey);
+      await recordSkippedFilter(feed.id, eventKey, "too-old");
+      continue;
+    }
+
+    if (input.force) {
+      await clearPostClaim(feed.id, eventKey);
+    } else if (await hasPostedMessage(feed.id, eventKey)) {
+      skipped.push(`${feed.feedType}: already posted (pass --force to replay)`);
+      continue;
+    }
+
+    await tryClaimPost(feed.id, eventKey);
+    await postBattleToFeed({
+      feedId: feed.id,
+      channelId: feed.channelId,
+      eventKey,
+      snapshot,
+      trackedGuildId: feed.targetAlbionId,
+      trackedGuildName: feed.targetName,
+      pingRoleId: filters.pingRoleId,
+      createThread:
+        Boolean(filters.createThread) &&
+        !isPostedDiscordMessageId(await getPostedMessage(feed.id, threadKey)),
+      threadEventKey: threadKey,
     });
     posted.push({ feedType: feed.feedType, channelId: feed.channelId });
   }
