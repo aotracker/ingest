@@ -8,6 +8,8 @@ import {
   CircuitOpenError,
   isCircuitOpenError,
 } from "@aotracker/core/db/api-state";
+import { refreshRegionEntityStats } from "@aotracker/core/db/entity-stats";
+import { purgeExpiredPlayerDayStats } from "@aotracker/core/db/player-day-stats";
 import {
   ingestRegionEvents,
   ingestRecentBattles,
@@ -50,6 +52,13 @@ export async function runIngestPoll(): Promise<void> {
 
 export async function runHealthChecks(): Promise<void> {
   await purgeExpiredOpsData();
+  await ensureSyncStates();
+  await refreshRegionEntityStats().catch((err) => {
+    console.warn("[health] entity-stats snapshot skipped:", err);
+  });
+  await purgeExpiredPlayerDayStats().catch((err) => {
+    console.warn("[health] player-day-stats purge skipped:", err);
+  });
   const client = getAlbionClient();
 
   for (const region of ENABLED_REGIONS) {

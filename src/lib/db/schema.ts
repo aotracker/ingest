@@ -361,6 +361,32 @@ export const guildHourPlayers = pgTable(
   ]
 );
 
+/**
+ * Per-player UTC-day kill count and fame. Homepage / player leaderboards
+ * aggregate this instead of GROUP BY on kill_events.
+ */
+export const playerDayStats = pgTable(
+  "player_day_stats",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    playerId: uuid("player_id").notNull(),
+    utcDate: date("utc_date", { mode: "string" }).notNull(),
+    contentType: contentTypeEnum("content_type").notNull(),
+    killCount: integer("kill_count").notNull().default(0),
+    killFame: bigint("kill_fame", { mode: "number" }).notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("player_day_stats_bucket_idx").on(
+      t.region,
+      t.playerId,
+      t.utcDate,
+      t.contentType
+    ),
+    index("player_day_stats_date_idx").on(t.utcDate, t.region, t.contentType),
+  ]
+);
+
 export const killItems = pgTable(
   "kill_items",
   {
@@ -399,6 +425,12 @@ export const apiSyncState = pgTable(
     rateLimitUntil: timestamp("rate_limit_until", { withTimezone: true }),
     avgLatencyMs: integer("avg_latency_ms").default(0),
     eventsIngestedLastHour: integer("events_ingested_last_hour").default(0),
+    /** Newest kill_events.occurred_at for this region (health-job snapshot). */
+    latestKillAt: timestamp("latest_kill_at", { withTimezone: true }),
+    playerCount: integer("player_count").notNull().default(0),
+    guildCount: integer("guild_count").notNull().default(0),
+    killCount: integer("kill_count").notNull().default(0),
+    battleCount: integer("battle_count").notNull().default(0),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   }
 );

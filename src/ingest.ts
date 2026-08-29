@@ -33,6 +33,7 @@ import {
   RECENT_BATTLES_POLL_LIMIT,
 } from "@aotracker/core/battles-constants";
 import { recordGuildHourActivity } from "@aotracker/core/db/guild-hour-stats";
+import { recordPlayerDayKill } from "@aotracker/core/db/player-day-stats";
 import { db, schema } from "@aotracker/core/db";
 import { slimKillEventPayload } from "@aotracker/core/albion/slim-kill-event";
 import { formatPgError, withTxRetry } from "@aotracker/core/db/pg-errors";
@@ -1139,6 +1140,13 @@ export async function upsertKillEventDetail(
           guildAlbionId: row.guildAlbionId,
           guildName: row.guildName?.trim() || null,
         })),
+      });
+      await recordPlayerDayKill(tx, {
+        region,
+        playerId: killerId,
+        occurredAt: eventRow.occurredAt,
+        contentType,
+        killFame: eventRow.totalVictimKillFame ?? 0,
       });
       return true;
     })
