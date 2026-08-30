@@ -45,6 +45,7 @@
     "db:apply-kill-loot-silver": "tsx --env-file=.env scripts/db/apply-kill-loot-silver.ts",
     "db:apply-page-perf-rollups": "tsx --env-file=.env scripts/db/apply-page-perf-rollups.ts",
     "db:apply-player-media": "tsx --env-file=.env scripts/db/apply-player-media.ts",
+    "media:import": "tsx --env-file=.env scripts/import-player-media.ts",
     "db:refresh-item-market-prices": "tsx --env-file=.env scripts/db/refresh-item-market-prices.ts",
     "db:reprice-loot-silver": "tsx --env-file=.env scripts/db/apply-kill-loot-silver.ts --reprice",
     "db:backfill-kill-storage": "tsx --env-file=.env scripts/db/backfill-kill-storage-slim.ts",
