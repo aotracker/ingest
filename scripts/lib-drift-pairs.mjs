@@ -26,4 +26,6 @@ export const PAIRS = [
   "src/lib/market/aggregate-unit-prices.ts",
   "src/lib/discord-feed-shared.ts",
   "src/lib/item-icon-keys.ts",
+  "src/lib/media/urls.ts",
+  "src/lib/twitch/helix.ts",
 ];

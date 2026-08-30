@@ -164,6 +164,11 @@ export async function executeJob(
       await handleNotifyDiscord(payload);
       return;
     }
+    case "notify-discord-live": {
+      const { handleNotifyDiscordLive } = await import("./discord/notify-live");
+      await handleNotifyDiscordLive(payload);
+      return;
+    }
     default:
       throw new Error(`Unknown job: ${name}`);
   }

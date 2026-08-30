@@ -22,6 +22,7 @@ import {
 import { runHealthChecks, runIngestPoll } from "./scheduled";
 import { runLiveEventsPoll } from "./discord/live-poll";
 import { runDiscordGuildCatchup } from "./discord/catchup";
+import { runMediaLivePoll } from "./media/live-poll";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 
 /** Lock must outlive the slowest ingest poll; default BullMQ lock is only 30s. */
@@ -65,6 +66,7 @@ let shuttingDown = false;
 let ingestPollInFlight = false;
 let liveEventsInFlight = false;
 let discordCatchupInFlight = false;
+let mediaLiveInFlight = false;
 
 function installSignalHandlers(): void {
   const onSignal = (signal: string) => {
@@ -173,6 +175,30 @@ async function startSchedulerWorker(): Promise<{
           throw err;
         } finally {
           discordCatchupInFlight = false;
+        }
+        return;
+      }
+
+      if (job.name === "media-live-poll") {
+        if (mediaLiveInFlight) return;
+        mediaLiveInFlight = true;
+        const startedAt = Date.now();
+        try {
+          const result = await runMediaLivePoll();
+          await recordWorkerRunSuccess("media-live", {
+            task: "media-live",
+            source,
+            durationMs: Date.now() - startedAt,
+            ...result,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          await recordWorkerRunError("media-live", message).catch(
+            () => undefined
+          );
+          throw err;
+        } finally {
+          mediaLiveInFlight = false;
         }
         return;
       }

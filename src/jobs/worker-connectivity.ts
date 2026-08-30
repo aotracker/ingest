@@ -11,6 +11,7 @@ export interface WorkerConnectivitySnapshot {
     healthCheck: boolean;
     liveEventsPoll: boolean;
     discordCatchup: boolean;
+    mediaLivePoll: boolean;
   };
   processorJobsActive: boolean;
   fetchedAt: string;
@@ -58,6 +59,9 @@ export async function getWorkerConnectivity(): Promise<WorkerConnectivitySnapsho
       ),
       discordCatchup: activeSchedulerJobs.some(
         (job) => job.name === "discord-guild-catchup"
+      ),
+      mediaLivePoll: activeSchedulerJobs.some(
+        (job) => job.name === "media-live-poll"
       ),
     },
     processorJobsActive:

@@ -6,6 +6,7 @@ import {
   FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
+  FEED_GUILD_LIVE,
   GUILD_FEED_TYPES,
   applyFeedFilterPatch,
   parseFilters,
@@ -48,31 +49,31 @@ export async function listFeedsForServer(
     .select()
     .from(schema.discordFeeds)
     .where(eq(schema.discordFeeds.discordGuildId, discordGuildId));
-  await ensureGuildBattlesFeedFromRows(discordGuildId, rows);
-  if (rows.some((row) => row.feedType === FEED_GUILD_BATTLES)) return rows;
+  const inserted = await ensureMissingGuildFeeds(discordGuildId, rows);
+  if (!inserted) return rows;
   return db
     .select()
     .from(schema.discordFeeds)
     .where(eq(schema.discordFeeds.discordGuildId, discordGuildId));
 }
 
-async function ensureGuildBattlesFeedFromRows(
+async function ensureMissingGuildFeeds(
   discordGuildId: string,
   rows: DiscordFeedRow[]
-): Promise<void> {
-  const source = rows.find(
-    (row) =>
-      row.feedType === FEED_GUILD_KILLS || row.feedType === FEED_GUILD_DEATHS
+): Promise<boolean> {
+  const source = rows.find((row) =>
+    (GUILD_FEED_TYPES as readonly string[]).includes(row.feedType)
   );
-  if (!source) return;
-  if (rows.some((row) => row.feedType === FEED_GUILD_BATTLES)) return;
+  if (!source) return false;
+  const have = new Set(rows.map((row) => row.feedType));
+  const missing = GUILD_FEED_TYPES.filter((type) => !have.has(type));
+  if (missing.length === 0) return false;
 
   const now = new Date();
-  await db
-    .insert(schema.discordFeeds)
-    .values({
+  await db.insert(schema.discordFeeds).values(
+    missing.map((feedType) => ({
       discordGuildId,
-      feedType: FEED_GUILD_BATTLES,
+      feedType,
       targetType: source.targetType,
       targetAlbionId: source.targetAlbionId,
       region: source.region,
@@ -80,8 +81,9 @@ async function ensureGuildBattlesFeedFromRows(
       createdByUserId: source.createdByUserId,
       createdAt: now,
       updatedAt: now,
-    })
-    .onConflictDoNothing();
+    }))
+  ).onConflictDoNothing();
+  return true;
 }
 
 export async function findMatchingBattleFeeds(input: {
@@ -354,6 +356,17 @@ export async function trackGuildFeeds(input: {
     {
       discordGuildId: input.discordGuildId,
       feedType: FEED_GUILD_BATTLES,
+      targetType: "guild",
+      targetAlbionId: input.albionGuildId,
+      region: input.region,
+      targetName: input.albionGuildName,
+      createdByUserId: input.createdByUserId,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      discordGuildId: input.discordGuildId,
+      feedType: FEED_GUILD_LIVE,
       targetType: "guild",
       targetAlbionId: input.albionGuildId,
       region: input.region,

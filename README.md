@@ -58,7 +58,7 @@ Production: use PM2 (`ingest-api`, `ingest-scheduler`, `ingest-worker`) — see 
 | Setting | Value |
 |---------|--------|
 | Main ingest poll | every 25 minutes |
-| Live events poll | every 45 seconds (same batch caches as main poll) |
+| Live events poll | every 2 minutes (same batch caches as main poll) |
 | Albion rate limit | 1 request/second per region |
 | `DATABASE_POOL_MAX` | 3 per PM2 app (override in `.env`) |
 | `INGEST_DEBUG=1` | verbose per-10-event ingest progress logs |

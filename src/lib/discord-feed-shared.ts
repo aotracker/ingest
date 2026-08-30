@@ -1,11 +1,13 @@
 export const FEED_GUILD_KILLS = "guild_kills";
 export const FEED_GUILD_DEATHS = "guild_deaths";
 export const FEED_GUILD_BATTLES = "guild_battles";
+export const FEED_GUILD_LIVE = "guild_live";
 
 export const GUILD_FEED_TYPES = [
   FEED_GUILD_KILLS,
   FEED_GUILD_DEATHS,
   FEED_GUILD_BATTLES,
+  FEED_GUILD_LIVE,
 ] as const;
 
 export type DiscordFeedType = (typeof GUILD_FEED_TYPES)[number];

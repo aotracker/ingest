@@ -28,6 +28,7 @@ export const ownerRoleEnum = pgEnum("owner_role", [
   "participant",
 ]);
 export const itemCategoryEnum = pgEnum("item_category", ["equipment", "inventory"]);
+export const mediaPlatformEnum = pgEnum("media_platform", ["twitch", "youtube"]);
 
 export const guilds = pgTable(
   "guilds",
@@ -726,6 +727,119 @@ export const userClaimedCharacters = pgTable(
     ),
     uniqueIndex("user_claimed_characters_user_region_idx").on(t.userId, t.region),
     index("user_claimed_characters_user_idx").on(t.userId),
+  ]
+);
+
+/** Admin-attached Twitch/YouTube channel for an Albion player. */
+export const playerMediaLinks = pgTable(
+  "player_media_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    playerAlbionId: text("player_albion_id").notNull(),
+    playerName: text("player_name").notNull(),
+    platform: mediaPlatformEnum("platform").notNull(),
+    channelId: text("channel_id").notNull(),
+    login: text("login").notNull(),
+    displayName: text("display_name").notNull(),
+    avatarUrl: text("avatar_url"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("player_media_links_player_platform_idx").on(
+      t.region,
+      t.playerAlbionId,
+      t.platform
+    ),
+    uniqueIndex("player_media_links_channel_idx").on(t.platform, t.channelId),
+    index("player_media_links_player_idx").on(t.region, t.playerAlbionId),
+  ]
+);
+
+/** Latest Helix live snapshot keyed by platform + channel (Twitch user id). */
+export const mediaLiveState = pgTable(
+  "media_live_state",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    platform: mediaPlatformEnum("platform").notNull(),
+    channelId: text("channel_id").notNull(),
+    isLive: boolean("is_live").notNull().default(false),
+    title: text("title"),
+    viewerCount: integer("viewer_count"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    thumbnailUrl: text("thumbnail_url"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("media_live_state_channel_idx").on(t.platform, t.channelId),
+  ]
+);
+
+/** Albion-on-Twitch broadcast windows used to attach VODs to kills. */
+export const mediaStreamSessions = pgTable(
+  "media_stream_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    platform: mediaPlatformEnum("platform").notNull(),
+    channelId: text("channel_id").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    vodId: text("vod_id"),
+    vodDurationSeconds: integer("vod_duration_seconds"),
+    title: text("title"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    index("media_stream_sessions_channel_started_idx").on(
+      t.platform,
+      t.channelId,
+      t.startedAt
+    ),
+    index("media_stream_sessions_open_idx").on(t.platform, t.channelId),
+  ]
+);
+
+/** Optional official guild Twitch/YouTube pin (admin-set). */
+export const guildMediaPins = pgTable(
+  "guild_media_pins",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    region: regionEnum("region").notNull(),
+    guildAlbionId: text("guild_albion_id").notNull(),
+    guildName: text("guild_name").notNull(),
+    platform: mediaPlatformEnum("platform").notNull(),
+    channelId: text("channel_id").notNull(),
+    login: text("login").notNull(),
+    displayName: text("display_name").notNull(),
+    avatarUrl: text("avatar_url"),
+    createdByUserId: text("created_by_user_id").references(() => user.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("guild_media_pins_guild_platform_idx").on(
+      t.region,
+      t.guildAlbionId,
+      t.platform
+    ),
   ]
 );
 

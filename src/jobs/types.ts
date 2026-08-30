@@ -31,8 +31,12 @@ export type JobPayload = {
   notReadyDefers?: number;
   /** Epoch ms when the first BattleNotReady soft-defer happened. */
   notReadySince?: number;
-  /** Set when a user-facing page/retry asked to run this job ASAP. */
+  /** User-promoted jobs skip some backoffs. */
   userPromoted?: boolean;
+  /** Twitch user id for media-live Discord notify. */
+  twitchChannelId?: string;
+  /** ISO start time of the Albion stream session. */
+  streamStartedAt?: string;
 };
 
 export interface EnqueueJobInput {

@@ -44,6 +44,7 @@ import {
   FEED_GUILD_BATTLES,
   FEED_GUILD_DEATHS,
   FEED_GUILD_KILLS,
+  FEED_GUILD_LIVE,
   applyFeedFilterPatch,
   parseFilters,
   DEFAULT_BATTLE_FEED_MIN_PLAYERS,
@@ -71,7 +72,7 @@ function guildCommand(): SlashCommandBuilder {
 export const slashCommandBuilders = [
   guildCommand()
     .setName("track")
-    .setDescription("Follow an Albion guild's kills, deaths, and battles in this server")
+    .setDescription("Follow an Albion guild's kills, deaths, battles, and live streams in this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addStringOption((option) =>
       option
@@ -121,6 +122,17 @@ export const slashCommandBuilders = [
       option
         .setName("channel")
         .setDescription("Battles channel")
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(true)
+    ),
+  guildCommand()
+    .setName("live-channel")
+    .setDescription("Channel for tracked-guild Twitch live pings")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addChannelOption((option) =>
+      option
+        .setName("channel")
+        .setDescription("Live streams channel")
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
         .setRequired(true)
     ),
@@ -175,12 +187,13 @@ export const slashCommandBuilders = [
           { name: "Kills", value: "kills" },
           { name: "Deaths", value: "deaths" },
           { name: "Battles", value: "battles" },
+          { name: "Live", value: "live" },
           { name: "All", value: "both" }
         )
     ),
   guildCommand()
     .setName("ping-role")
-    .setDescription("Role to mention on kill, death, or battle posts")
+    .setDescription("Role to mention on kill, death, battle, or live posts")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addRoleOption((option) =>
       option.setName("role").setDescription("Role to ping (omit with clear)")
@@ -196,6 +209,7 @@ export const slashCommandBuilders = [
           { name: "Kills", value: "kills" },
           { name: "Deaths", value: "deaths" },
           { name: "Battles", value: "battles" },
+          { name: "Live", value: "live" },
           { name: "All", value: "both" }
         )
     ),
@@ -360,6 +374,7 @@ const MANAGE_COMMANDS = new Set([
   "kills-channel",
   "deaths-channel",
   "battles-channel",
+  "live-channel",
   "untrack",
   "feed-filters",
   "ping-role",
@@ -401,6 +416,9 @@ export async function handleChatCommand(
       return;
     case "battles-channel":
       await handleChannel(interaction, FEED_GUILD_BATTLES, "battles");
+      return;
+    case "live-channel":
+      await handleChannel(interaction, FEED_GUILD_LIVE, "live streams");
       return;
     case "untrack":
       await handleUntrack(interaction);
@@ -470,8 +488,8 @@ async function handleTrack(
 
   await interaction.reply({
     content: replaced
-      ? `Now tracking **${guild.name}** (${regionLabel(regionRaw)}). Previous guild tracking was replaced. Set channels with \`/kills-channel\`, \`/deaths-channel\`, and \`/battles-channel\`.`
-      : `Tracking **${guild.name}** (${regionLabel(regionRaw)}). Set channels with \`/kills-channel\`, \`/deaths-channel\`, and \`/battles-channel\`.`,
+      ? `Now tracking **${guild.name}** (${regionLabel(regionRaw)}). Previous guild tracking was replaced. Set channels with \`/kills-channel\`, \`/deaths-channel\`, \`/battles-channel\`, and \`/live-channel\`.`
+      : `Tracking **${guild.name}** (${regionLabel(regionRaw)}). Set channels with \`/kills-channel\`, \`/deaths-channel\`, \`/battles-channel\`, and \`/live-channel\`.`,
     ephemeral: true,
   });
 }
@@ -507,7 +525,7 @@ async function handleUntrack(
   await interaction.reply({
     content:
       removed > 0
-        ? "Stopped tracking. Channels will no longer receive kill, death, or battle posts."
+        ? "Stopped tracking. Channels will no longer receive kill, death, battle, or live posts."
         : "Nothing was being tracked in this server.",
     ephemeral: true,
   });
@@ -520,19 +538,21 @@ async function handleStatus(
   const kills = feeds.find((f) => f.feedType === FEED_GUILD_KILLS);
   const deaths = feeds.find((f) => f.feedType === FEED_GUILD_DEATHS);
   const battles = feeds.find((f) => f.feedType === FEED_GUILD_BATTLES);
-  if (!kills && !deaths && !battles) {
+  const live = feeds.find((f) => f.feedType === FEED_GUILD_LIVE);
+  if (!kills && !deaths && !battles && !live) {
     await interaction.reply({
       content: "No Albion guild is tracked. Use `/track` to start.",
       ephemeral: true,
     });
     return;
   }
-  const target = kills ?? deaths ?? battles;
+  const target = kills ?? deaths ?? battles ?? live;
   const lines = [
     `**Guild:** ${target?.targetName ?? "?"} (${regionLabel(target?.region ?? "americas")})`,
     `**Kills:** ${kills?.channelId ? `<#${kills.channelId}>` : "not set"}`,
     `**Deaths:** ${deaths?.channelId ? `<#${deaths.channelId}>` : "not set"}`,
     `**Battles:** ${battles?.channelId ? `<#${battles.channelId}>` : "not set"}`,
+    `**Live:** ${live?.channelId ? `<#${live.channelId}>` : "not set"}`,
     `**Kills filters:** ${formatFilterLine(parseFilters(kills?.filters))}`,
     `**Deaths filters:** ${formatFilterLine(parseFilters(deaths?.filters))}`,
     `**Battles filters:** ${formatBattleFilterLine(parseFilters(battles?.filters))}`,
@@ -567,6 +587,7 @@ function feedTypesFromOption(
   if (value === "kills") return [FEED_GUILD_KILLS];
   if (value === "deaths") return [FEED_GUILD_DEATHS];
   if (value === "battles") return [FEED_GUILD_BATTLES];
+  if (value === "live") return [FEED_GUILD_LIVE];
   return undefined;
 }
 

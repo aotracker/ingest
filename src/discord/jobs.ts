@@ -43,3 +43,19 @@ export async function enqueueNotifyDiscordBattle(input: {
     maxAttempts: 5,
   });
 }
+
+export async function enqueueNotifyDiscordLive(input: {
+  channelId: string;
+  startedAt: string;
+}): Promise<void> {
+  await enqueueJob({
+    queue: QUEUE_NAMES.DISCORD,
+    name: "notify-discord-live",
+    dedupeKey: `notify-discord-live-${input.channelId}-${input.startedAt}`,
+    payload: {
+      twitchChannelId: input.channelId,
+      streamStartedAt: input.startedAt,
+    },
+    maxAttempts: 5,
+  });
+}

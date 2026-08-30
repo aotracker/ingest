@@ -4,6 +4,7 @@ import {
   HEALTH_CHECK_INTERVAL_MS,
   INGEST_POLL_INTERVAL_MS,
   LIVE_EVENTS_INTERVAL_MS,
+  MEDIA_LIVE_INTERVAL_MS,
 } from "@aotracker/core/jobs/worker-state";
 import { getRedisConnection } from "./connection";
 import { getSchedulerQueue } from "./queues";
@@ -17,6 +18,7 @@ export const SCHEDULER_REPEAT_DEFS = [
     everyMs: DISCORD_CATCHUP_INTERVAL_MS,
     runOnStart: false,
   },
+  { name: "media-live-poll", everyMs: MEDIA_LIVE_INTERVAL_MS, runOnStart: true },
 ] as const;
 
 export type SchedulerRepeatName = (typeof SCHEDULER_REPEAT_DEFS)[number]["name"];
@@ -125,11 +127,12 @@ export async function registerRepeatableJobs(): Promise<void> {
     }
 
     const ingestMin = SCHEDULER_REPEAT_DEFS[1].everyMs / 60_000;
-    const liveSec = SCHEDULER_REPEAT_DEFS[2].everyMs / 1000;
+    const liveMin = SCHEDULER_REPEAT_DEFS[2].everyMs / 60_000;
     const healthMin = SCHEDULER_REPEAT_DEFS[0].everyMs / 60_000;
     const catchupMin = SCHEDULER_REPEAT_DEFS[3].everyMs / 60_000;
+    const mediaLiveSec = SCHEDULER_REPEAT_DEFS[4].everyMs / 1000;
     console.log(
-      `[worker] Registered scheduler repeats: ingest every ${ingestMin}m, live events every ${liveSec}s, health every ${healthMin}m, discord catch-up every ${catchupMin}m`
+      `[worker] Registered scheduler repeats: ingest every ${ingestMin}m, live events every ${liveMin}m, health every ${healthMin}m, discord catch-up every ${catchupMin}m, media-live every ${mediaLiveSec}s`
     );
   } finally {
     const current = await redis.get(REGISTER_LOCK_KEY);

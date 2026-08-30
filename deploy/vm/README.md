@@ -25,7 +25,7 @@ PM2 runs the ingest HTTP API and BullMQ workers as separate managed processes vi
 | PM2 app | Command | Purpose |
 |---------|---------|---------|
 | `ingest-api` | `tsx src/server.ts` | HTTP API on `INGEST_API_PORT` (default `3001`) — queue status, job triggers for Vercel |
-| `ingest-scheduler` | `tsx src/worker.ts scheduler` | Repeatable jobs only: 25m ingest poll, ~45s live events, 5m health, 5m Discord catch-up |
+| `ingest-scheduler` | `tsx src/worker.ts scheduler` | Repeatable jobs only: 25m ingest poll, 2m live events, 5m health, 5m Discord catch-up |
 | `ingest-worker` | `tsx src/worker.ts process` | Processors for `ingest`, `refresh`, and `discord` queues |
 | `discord-bot` | `tsx src/discord/start.ts` | Discord gateway + slash commands. **Only started when `DISCORD_ENABLED=1`** |
 | `db-retain` | `tsx scripts/db-retain.ts` | Weekly retention (Sun 05:30 UTC): battle JSON eviction, kill compact, hour-stat purge. Do not `pm2 restart` the whole ecosystem — that runs retention immediately |
