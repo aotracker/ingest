@@ -181,6 +181,11 @@ export const killEvents = pgTable(
     lootEstSilver: bigint("loot_est_silver", { mode: "number" }),
     /** Estimated victim equipped-gear silver at ingest (AODP cache). */
     gearEstSilver: bigint("gear_est_silver", { mode: "number" }),
+    /**
+     * Orange PvP (inventory-only death): Depths and yellow-portal Ancient Lands.
+     * Inferred at ingest — the Albion API does not report zone lethality.
+     */
+    isOrangeZone: boolean("is_orange_zone").notNull().default(false),
     participantCount: integer("participant_count"),
     groupMemberCount: integer("group_member_count"),
     killerGuildAlbionId: text("killer_guild_albion_id"),
@@ -210,6 +215,12 @@ export const killEvents = pgTable(
     index("kill_events_region_occurred_fame_idx")
       .on(t.region, t.occurredAt)
       .where(sql`${t.totalVictimKillFame} > 0`),
+    /** Public feeds also drop orange-zone (inventory-only) kills. */
+    index("kill_events_region_occurred_lethal_idx")
+      .on(t.region, t.occurredAt)
+      .where(
+        sql`${t.totalVictimKillFame} > 0 AND ${t.isOrangeZone} = false`
+      ),
     index("kill_events_battle_id_idx").on(t.battleId),
     index("kill_events_region_albion_battle_idx")
       .on(t.region, t.albionBattleId)

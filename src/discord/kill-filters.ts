@@ -53,6 +53,8 @@ export async function killMeetsFeedFilters(
   feed: FeedFilterSource & { region?: string },
   snapshot: KillSnapshot
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (snapshot.isOrangeZone) return { ok: false, reason: "orange-zone" };
+
   const sync = feedPassesSyncFilters(feed, {
     fame: snapshot.totalVictimKillFame ?? 0,
     occurredAt: snapshot.occurredAt,

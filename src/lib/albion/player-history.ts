@@ -1,5 +1,6 @@
 import { cache } from "../cache";
 import { classifyContentType } from "./classify";
+import { isOrangeZoneEvent } from "./orange-zone";
 import {
   type AlbionEvent,
   type AlbionPlayerRef,
@@ -40,6 +41,8 @@ export interface KillCardEvent {
   occurredAt: Date;
   contentType: string;
   totalVictimKillFame: number | null;
+  /** Orange PvP (inventory-only death). */
+  isOrangeZone?: boolean;
   killer?: {
     albionId: string;
     name: string;
@@ -165,6 +168,7 @@ export function albionEventToKillCard(
     region,
     occurredAt: new Date(event.TimeStamp),
     contentType,
+    isOrangeZone: isOrangeZoneEvent(event),
     totalVictimKillFame: event.TotalVictimKillFame ?? null,
     killer: event.Killer?.Id
       ? {

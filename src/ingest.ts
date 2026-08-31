@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
+import { isOrangeZoneKill } from "@aotracker/core/albion/orange-zone";
 import { getAlbionClient } from "@aotracker/core/albion/client";
 import { isHttpNotFoundError } from "@aotracker/core/albion/errors";
 import { normalizeAllianceInfo } from "@aotracker/core/albion/alliance-info";
@@ -1081,6 +1082,14 @@ export async function upsertKillEventDetail(
     totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
     lootEstSilver,
     gearEstSilver,
+    isOrangeZone: isOrangeZoneKill({
+      totalVictimKillFame: toBigInt(event.TotalVictimKillFame),
+      lootEstSilver,
+      gearEstSilver,
+      killer: event.Killer,
+      victim: event.Victim,
+      participants: event.Participants,
+    }),
     participantCount: counts.participantCount,
     groupMemberCount: counts.groupMemberCount,
     killerGuildAlbionId: event.Killer?.GuildId?.trim() || null,

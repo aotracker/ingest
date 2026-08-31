@@ -69,6 +69,11 @@ export async function postKillToMatchingFeeds(input: {
       `Kill ${input.region}/${input.eventId} has no kill fame (bot skips these)`
     );
   }
+  if (snapshot.isOrangeZone) {
+    throw new Error(
+      `Kill ${input.region}/${input.eventId} is orange-zone (bot skips these)`
+    );
+  }
 
   const killerGuildId = snapshot.killer?.guildAlbionId ?? null;
   const victimGuildId = snapshot.victim?.guildAlbionId ?? null;

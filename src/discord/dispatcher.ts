@@ -1,5 +1,6 @@
 import type { AlbionEvent, AlbionRegion } from "@aotracker/core/albion/types";
 import { classifyContentType, extractEventCounts } from "@aotracker/core/albion/classify";
+import { isOrangeZoneEvent } from "@aotracker/core/albion/orange-zone";
 import { isDiscordEnabled } from "./enabled";
 import {
   clearPostClaim,
@@ -36,6 +37,7 @@ export async function emitKillIngested(
 
   const fame = event.TotalVictimKillFame ?? 0;
   if (fame <= 0) return;
+  if (isOrangeZoneEvent(event)) return;
 
   const killerGuildId = guildId(event.Killer);
   const victimGuildId = guildId(event.Victim);

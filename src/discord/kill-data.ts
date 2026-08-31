@@ -26,6 +26,7 @@ export interface KillSnapshot {
   occurredAt: Date;
   contentType: string;
   totalVictimKillFame: number | null;
+  isOrangeZone: boolean;
   participantCount: number | null;
   assistCount: number;
   detailSyncedAt: Date | null;
@@ -122,6 +123,7 @@ export async function loadKillSnapshot(
     occurredAt: event.occurredAt,
     contentType: event.contentType,
     totalVictimKillFame: event.totalVictimKillFame,
+    isOrangeZone: event.isOrangeZone,
     participantCount: event.participantCount,
     assistCount,
     detailSyncedAt: event.detailSyncedAt,

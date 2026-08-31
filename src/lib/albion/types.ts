@@ -17,12 +17,18 @@ export function contentTypeLabel(type: string): string {
 
 export type RangeType = "week" | "lastWeek" | "month" | "lastMonth";
 
+export interface AlbionLegendaryTrait {
+  trait?: string;
+  value?: number;
+}
+
 export interface AlbionItem {
   Type: string;
   Quality: number;
   Count: number;
   ActiveSpells?: string[];
   PassiveSpells?: string[];
+  LegendarySoul?: { traits?: AlbionLegendaryTrait[] } | null;
 }
 
 export interface AlbionEquipment {

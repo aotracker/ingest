@@ -17,6 +17,8 @@ export const PAIRS = [
   "src/lib/db/schema.ts",
   "src/lib/albion/classify.ts",
   "src/lib/albion/kills.ts",
+  "src/lib/albion/item-power.ts",
+  "src/lib/albion/orange-zone.ts",
   "src/lib/db/battle-cache.ts",
   "src/lib/db/battles-feed-preview.ts",
   "src/lib/db/sync.ts",
