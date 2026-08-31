@@ -122,6 +122,24 @@ export function youtubeWatchUrl(videoId: string): string {
   return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
+export function youtubeThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+}
+
+/** Helix live/VOD thumbs use `{width}`/`{height}` or `%{width}`/`%{height}` placeholders. */
+export function sizedTwitchThumbnail(
+  url: string | null | undefined,
+  width = 440,
+  height = 248
+): string | null {
+  if (!url?.trim()) return null;
+  return url
+    .replaceAll("%{width}", String(width))
+    .replaceAll("%{height}", String(height))
+    .replaceAll("{width}", String(width))
+    .replaceAll("{height}", String(height));
+}
+
 export function isMediaPlatform(value: string): value is MediaPlatform {
   return value === "twitch" || value === "youtube";
 }

@@ -28,6 +28,18 @@ export type TwitchVideo = {
   createdAt: string;
   durationSeconds: number | null;
   url: string;
+  thumbnailUrl: string | null;
+};
+
+export type TwitchClip = {
+  id: string;
+  url: string;
+  title: string;
+  thumbnailUrl: string;
+  createdAt: string;
+  viewCount: number;
+  durationSeconds: number;
+  gameId: string;
 };
 
 type CachedToken = { token: string; expiresAtMs: number };
@@ -195,6 +207,7 @@ export async function getTwitchArchiveVideos(
       created_at: string;
       duration: string;
       url: string;
+      thumbnail_url?: string;
     }>;
   }>("/videos", {
     user_id: userId,
@@ -207,6 +220,51 @@ export async function getTwitchArchiveVideos(
     createdAt: row.created_at,
     durationSeconds: parseTwitchDurationSeconds(row.duration),
     url: row.url,
+    thumbnailUrl: row.thumbnail_url?.trim() || null,
+  }));
+}
+
+export async function getTwitchClipsByBroadcaster(
+  broadcasterId: string,
+  opts?: {
+    first?: number;
+    startedAt?: Date;
+    endedAt?: Date;
+  }
+): Promise<TwitchClip[]> {
+  const first = opts?.first ?? 20;
+  const query: Record<string, string> = {
+    broadcaster_id: broadcasterId,
+    first: String(Math.min(Math.max(first, 1), 100)),
+  };
+  // Without a date range Helix returns all-time clips by view count.
+  if (opts?.startedAt) {
+    query.started_at = opts.startedAt.toISOString();
+  }
+  if (opts?.endedAt) {
+    query.ended_at = opts.endedAt.toISOString();
+  }
+  const json = await helixGet<{
+    data?: Array<{
+      id: string;
+      url: string;
+      title: string;
+      thumbnail_url: string;
+      created_at: string;
+      view_count: number;
+      duration: number;
+      game_id: string;
+    }>;
+  }>("/clips", query);
+  return (json.data ?? []).map((row) => ({
+    id: row.id,
+    url: row.url,
+    title: row.title,
+    thumbnailUrl: row.thumbnail_url,
+    createdAt: row.created_at,
+    viewCount: row.view_count,
+    durationSeconds: Math.round(row.duration),
+    gameId: row.game_id,
   }));
 }
 
