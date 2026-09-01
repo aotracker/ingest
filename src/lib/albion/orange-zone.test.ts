@@ -10,6 +10,7 @@ import {
   LETHAL_ANCIENT_LANDS_SOFTCAP_RATE,
   ORANGE_SOFTCAP,
   ORANGE_SOFTCAP_RATE,
+  playerSoftcapMatch,
   playerSoftcapRate,
 } from "./orange-zone";
 import type { AlbionEquipment, AlbionItem, AlbionPlayerRef } from "./types";
@@ -121,6 +122,65 @@ describe("isOrangeZoneKill", () => {
       isOrangeZoneKill({
         totalVictimKillFame: 200_000,
         gearEstSilver: 8_000_000,
+        killer: loadout,
+        victim: { ...loadout },
+      })
+    ).toBe(false);
+  });
+
+  it("does not let an overlapping 35% reading veto a clear 20% match", () => {
+    const raw = computeRawItemPower(overcappedSet())!;
+    const orangeIp = expectedCapped(raw, ORANGE_SOFTCAP_RATE);
+    const lethalIp = expectedCapped(raw, LETHAL_ANCIENT_LANDS_SOFTCAP_RATE);
+    const victim: AlbionPlayerRef = {
+      AverageItemPower: orangeIp,
+      Equipment: overcappedSet(),
+    };
+    const killer: AlbionPlayerRef = {
+      AverageItemPower: (orangeIp + lethalIp) / 2,
+      Equipment: overcappedSet(),
+    };
+    expect(playerSoftcapMatch(victim)).toEqual({ orange: true, lethal: false });
+    expect(playerSoftcapMatch(killer)).toEqual({ orange: true, lethal: true });
+    expect(
+      isOrangeZoneKill({
+        totalVictimKillFame: 80_000,
+        gearEstSilver: 8_000_000,
+        lootEstSilver: 25_000_000,
+        killer,
+        victim,
+      })
+    ).toBe(true);
+  });
+
+  it("labels inventory-only fame as orange even when IP is closer to 35%", () => {
+    const raw = computeRawItemPower(overcappedSet())!;
+    const loadout: AlbionPlayerRef = {
+      AverageItemPower: expectedCapped(raw, LETHAL_ANCIENT_LANDS_SOFTCAP_RATE),
+      Equipment: overcappedSet(),
+    };
+    expect(
+      isOrangeZoneKill({
+        totalVictimKillFame: 1152,
+        gearEstSilver: 47_000_000,
+        lootEstSilver: 18_000,
+        killer: loadout,
+        victim: { ...loadout },
+      })
+    ).toBe(true);
+  });
+
+  it("does not treat a 35% empty-bag combat death as orange", () => {
+    const raw = computeRawItemPower(overcappedSet())!;
+    const loadout: AlbionPlayerRef = {
+      AverageItemPower: expectedCapped(raw, LETHAL_ANCIENT_LANDS_SOFTCAP_RATE),
+      Equipment: overcappedSet(),
+    };
+    expect(
+      isOrangeZoneKill({
+        totalVictimKillFame: 0,
+        gearEstSilver: 8_000_000,
+        lootEstSilver: 0,
         killer: loadout,
         victim: { ...loadout },
       })

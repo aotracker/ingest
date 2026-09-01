@@ -69,6 +69,30 @@ function expectedCappedIp(raw: number, rate: number): number {
   return ORANGE_SOFTCAP + (raw - ORANGE_SOFTCAP) * rate;
 }
 
+export type SoftcapMatch = {
+  orange: boolean;
+  lethal: boolean;
+};
+
+/** Whether reported IP sits on the 1200/20% and/or 1200/35% curves. */
+export function playerSoftcapMatch(
+  player: AlbionPlayerRef | null | undefined
+): SoftcapMatch {
+  const none = { orange: false, lethal: false };
+  const reported = reportedItemPower(player);
+  const raw = computeRawItemPower(player?.Equipment);
+  if (reported == null || raw == null || raw <= ORANGE_SOFTCAP) return none;
+  if (raw - reported < SOFTCAP_MIN_GAP) return none;
+
+  const expectedOrange = expectedCappedIp(raw, ORANGE_SOFTCAP_RATE);
+  const expectedLethal = expectedCappedIp(raw, LETHAL_ANCIENT_LANDS_SOFTCAP_RATE);
+  return {
+    orange: Math.abs(reported - expectedOrange) <= SOFTCAP_TOLERANCE,
+    lethal:
+      Math.abs(reported - expectedLethal) <= SOFTCAP_TOLERANCE,
+  };
+}
+
 /** Closer matching softcap rate, or null if neither curve fits. */
 export function playerSoftcapRate(
   player: AlbionPlayerRef | null | undefined
@@ -82,13 +106,15 @@ export function playerSoftcapRate(
   const expectedLethal = expectedCappedIp(raw, LETHAL_ANCIENT_LANDS_SOFTCAP_RATE);
   const deltaOrange = Math.abs(reported - expectedOrange);
   const deltaLethal = Math.abs(reported - expectedLethal);
-  const matchOrange = deltaOrange <= SOFTCAP_TOLERANCE;
-  const matchLethal = deltaLethal <= SOFTCAP_TOLERANCE;
+  const match = {
+    orange: deltaOrange <= SOFTCAP_TOLERANCE,
+    lethal: deltaLethal <= SOFTCAP_TOLERANCE,
+  };
 
-  if (matchLethal && (!matchOrange || deltaLethal <= deltaOrange)) {
+  if (match.lethal && (!match.orange || deltaLethal <= deltaOrange)) {
     return LETHAL_ANCIENT_LANDS_SOFTCAP_RATE;
   }
-  if (matchOrange) return ORANGE_SOFTCAP_RATE;
+  if (match.orange) return ORANGE_SOFTCAP_RATE;
   return null;
 }
 
@@ -114,10 +140,27 @@ export function fameLooksInventoryOnly(input: OrangeZoneInput): boolean {
   return fame < gear / LETHAL_FAME_GEAR_DIVISOR;
 }
 
+/**
+ * Fame that cannot include equipped gear — bag loot only, gear still worn.
+ * Empty-bag (fame 0) stays on {@link fameLooksInventoryOnly} so a 35% IP
+ * match can still mark lethal empty drops as not orange.
+ */
+export function fameExcludesEquippedGear(input: OrangeZoneInput): boolean {
+  const fame = input.totalVictimKillFame ?? 0;
+  return fame > 0 && fameLooksInventoryOnly(input);
+}
+
 export function isOrangeZoneKill(input: OrangeZoneInput): boolean {
-  const rates = eventPlayers(input).map(playerSoftcapRate);
-  if (rates.includes(LETHAL_ANCIENT_LANDS_SOFTCAP_RATE)) return false;
-  if (rates.includes(ORANGE_SOFTCAP_RATE)) return true;
+  const matches = eventPlayers(input).map(playerSoftcapMatch);
+  const clearOrange = matches.some((m) => m.orange && !m.lethal);
+  const clearLethal = matches.some((m) => m.lethal && !m.orange);
+
+  // A unique 20% match wins even if another player is closer to 35%
+  // inside the overlap window (reconstruction noise).
+  if (clearOrange) return true;
+  // Inventory-only fame vs expensive worn gear is stronger than a 35% veto.
+  if (fameExcludesEquippedGear(input)) return true;
+  if (clearLethal) return false;
   return fameLooksInventoryOnly(input);
 }
 

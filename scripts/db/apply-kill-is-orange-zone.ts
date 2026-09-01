@@ -1,6 +1,7 @@
 /**
- * Add is_orange_zone on kill_events, backfill from stored loadouts, then add
- * the public-feed partial index (fame > 0 AND not orange).
+ * Add is_orange_zone on kill_events, backfill unlabeled rows from stored
+ * loadouts, then add the public-feed partial index (fame > 0 AND not orange).
+ * Safe to re-run after classifier changes — only sets currently-false rows.
  *
  * Usage (from ingest/, OVH VM or local):
  *   npm run db:apply-kill-is-orange-zone
@@ -98,13 +99,15 @@ async function main() {
         ? await sql<EventRow[]>`
             SELECT id, total_victim_kill_fame, loot_est_silver, gear_est_silver
             FROM kill_events
-            WHERE id > ${lastId}::uuid
+            WHERE is_orange_zone = false
+              AND id > ${lastId}::uuid
             ORDER BY id
             LIMIT ${BATCH_SIZE}
           `
         : await sql<EventRow[]>`
             SELECT id, total_victim_kill_fame, loot_est_silver, gear_est_silver
             FROM kill_events
+            WHERE is_orange_zone = false
             ORDER BY id
             LIMIT ${BATCH_SIZE}
           `;
