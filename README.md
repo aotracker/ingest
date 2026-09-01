@@ -23,6 +23,7 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 | `npm run db:apply-discord-bot` | Discord servers/feeds/post-log tables |
 | `npm run db:apply-player-media` | Player/guild Twitch link tables |
 | `npm run media:import` | Seed Twitch player links (dry-run; `--apply` to write) |
+| `npm run media:import:youtube` | Seed YouTube player links (dry-run; `--apply` to write). Needs `YOUTUBE_API_KEY`. |
 | `npm run jobs:ingest` | One-off ingest poll |
 | `npm run jobs:health` | One-off API health check |
 | `npm run db:retain` | Weekly retention (battle JSON, kill compact, hour-stat purge). `--dry-run` first. After the first real kill compact, run `VACUUM ANALYZE kill_events, kill_participants, kill_items;` on Postgres. |
