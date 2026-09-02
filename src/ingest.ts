@@ -62,7 +62,7 @@ import {
   CircuitOpenError,
   isCircuitOpenError,
 } from "@aotracker/core/db/api-state";
-import { toBigInt } from "@aotracker/core/utils";
+import { toBigInt, toFameRatio } from "@aotracker/core/utils";
 import { ensureBattleDetailQueued } from "./jobs/enqueue";
 import { sortEventsOldestFirst } from "./discord/order";
 import { estimateItemsSilver } from "./discord/silver";
@@ -1470,7 +1470,7 @@ export async function refreshPlayerProfile(
     avatarRing: info.AvatarRing ?? null,
     killFame: toBigInt(info.KillFame) ?? 0,
     deathFame: toBigInt(info.DeathFame) ?? 0,
-    fameRatio: info.FameRatio?.toString() ?? null,
+    fameRatio: toFameRatio(info.FameRatio),
     lifetimeStats: info.LifetimeStatistics ?? null,
   };
 

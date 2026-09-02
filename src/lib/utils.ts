@@ -32,3 +32,24 @@ export function toBigInt(value: number | string | null | undefined): number | nu
   if (Number.isNaN(n)) return null;
   return Math.round(n);
 }
+
+/**
+ * `players.fame_ratio` is numeric(10, 4) — max 999999.9999.
+ * Albion returns huge FameRatio when death fame is 0; clamp so the upsert cannot overflow.
+ */
+export const FAME_RATIO_NUMERIC_MAX = 999_999.9999;
+const FAME_RATIO_NUMERIC_MAX_SQL = "999999.9999";
+
+export function toFameRatio(
+  value: number | string | null | undefined
+): string | null {
+  if (value == null || value === "") return null;
+  const n =
+    typeof value === "number"
+      ? value
+      : parseFloat(String(value).replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  if (n > FAME_RATIO_NUMERIC_MAX) return FAME_RATIO_NUMERIC_MAX_SQL;
+  if (n < 0) return "0";
+  return String(n);
+}
