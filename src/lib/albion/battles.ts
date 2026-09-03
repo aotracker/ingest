@@ -18,8 +18,8 @@ const GUILD_BATTLES_REQUEST_OPTIONS = {
   timeout: 20_000,
 } as const;
 
-const GUILD_RECENT_BATTLES_PAGE_SIZE = 25;
-const GUILD_RECENT_BATTLES_MAX_PAGES = 4;
+const ENTITY_BATTLES_PAGE_SIZE = 25;
+const ENTITY_BATTLES_MAX_PAGES = 4;
 
 const BATTLE_EVENTS_PAGE_SIZE = 51;
 const BATTLE_EVENTS_MAX = 2000;
@@ -90,15 +90,38 @@ function sumListedPlayers(
   );
 }
 
+function listedGuildPlayers(
+  guilds: AlbionBattle["guilds"],
+  guildId: string
+): number {
+  if (!guilds) return 0;
+  const entry = guilds[guildId] ?? Object.values(guilds).find((g) => g.id === guildId);
+  return typeof entry?.players === "number" && entry.players > 0 ? entry.players : 0;
+}
+
+/** Players from this guild in the fight. Prefer the player list; fall back to guild stats. */
+export function countGuildMembersInBattle(
+  battle: Pick<AlbionBattle, "players" | "guilds">,
+  guildId: string
+): number {
+  const fromPlayers = battle.players
+    ? Object.values(battle.players).filter((player) => player.guildId === guildId)
+        .length
+    : 0;
+  if (fromPlayers > 0) return fromPlayers;
+  return listedGuildPlayers(battle.guilds, guildId);
+}
+
 export function toGuildBattleSummary(
   battle: AlbionBattle,
   guildId: string
 ): GuildBattleSummary {
-  const players = battle.players;
-  const guildMembers = players
-    ? Object.values(players).filter((player) => player.guildId === guildId).length
-    : 0;
-  const guildEntry = battle.guilds?.[guildId];
+  const guildMembers = countGuildMembersInBattle(battle, guildId);
+  const guildEntry =
+    battle.guilds?.[guildId] ??
+    (battle.guilds
+      ? Object.values(battle.guilds).find((g) => g.id === guildId)
+      : undefined);
   const guildPreview = battleGuildPreview(battle);
 
   return {
@@ -213,7 +236,7 @@ export function hasBattleKillFame(
   return (battle.totalFame ?? 0) > 0;
 }
 
-/** Recent guild battles need more than one member from the guild. */
+/** Guild/alliance profile lists need more than one member from that entity. */
 export function isMultiMemberGuildBattle(
   battle: Pick<GuildBattleSummary, "guildMembers">
 ): boolean {
@@ -351,33 +374,36 @@ export function isGuildBattleCacheComplete(
   );
 }
 
-async function fetchRecentGuildBattles(
+async function fetchEntityBattles(
   region: AlbionRegion,
-  guildId: string,
+  query: { guildId: string } | { allianceId: string },
+  sort: "topfame" | "recent",
   targetCount: number
 ): Promise<GuildBattleSummary[]> {
   const { getAlbionClient } = await import("./client");
   const client = getAlbionClient();
-  const requestOptions = GUILD_BATTLES_REQUEST_OPTIONS;
 
   const collected: GuildBattleSummary[] = [];
   const seenIds = new Set<number>();
 
-  for (let page = 0; page < GUILD_RECENT_BATTLES_MAX_PAGES; page++) {
+  for (let page = 0; page < ENTITY_BATTLES_MAX_PAGES; page++) {
     const raw = await client.getBattlesRaw(region, {
-      guildId,
-      limit: GUILD_RECENT_BATTLES_PAGE_SIZE,
-      offset: page * GUILD_RECENT_BATTLES_PAGE_SIZE,
-      sort: "recent",
+      ...query,
+      limit: ENTITY_BATTLES_PAGE_SIZE,
+      offset: page * ENTITY_BATTLES_PAGE_SIZE,
+      sort,
       range: "week",
-      requestOptions,
+      requestOptions: GUILD_BATTLES_REQUEST_OPTIONS,
     });
 
     if (raw.length === 0) break;
 
-    for (const battle of filterRecentGuildBattles(
-      summarizeGuildBattles(raw, guildId)
-    )) {
+    const summarized =
+      "guildId" in query
+        ? summarizeGuildBattles(raw, query.guildId)
+        : summarizeAllianceBattles(raw, query.allianceId);
+
+    for (const battle of filterRecentGuildBattles(summarized)) {
       if (seenIds.has(battle.id)) continue;
       seenIds.add(battle.id);
       collected.push(battle);
@@ -386,7 +412,7 @@ async function fetchRecentGuildBattles(
       }
     }
 
-    if (raw.length < GUILD_RECENT_BATTLES_PAGE_SIZE) break;
+    if (raw.length < ENTITY_BATTLES_PAGE_SIZE) break;
   }
 
   return collected;
@@ -399,6 +425,16 @@ export function summarizeGuildBattles(
   return battles
     .filter(hasBattleKillFame)
     .map((battle) => toGuildBattleSummary(battle, guildId));
+}
+
+export function summarizeAllianceBattles(
+  battles: AlbionBattle[],
+  allianceId: string
+): GuildBattleSummary[] {
+  return battles
+    .filter(hasBattleKillFame)
+    .filter((battle): battle is AlbionBattle & { id: number } => battle.id != null)
+    .map((battle) => toAllianceBattleSummary(battle, allianceId));
 }
 
 export async function getGuildTopBattles(
@@ -419,28 +455,9 @@ export async function getGuildBattlesBySort(
   if (!isRegionEnabled(region)) {
     return { battles: [], battlesError: null };
   }
-  const { getAlbionClient } = await import("./client");
-  const client = getAlbionClient();
-  const requestOptions = GUILD_BATTLES_REQUEST_OPTIONS;
-
   try {
-    if (sort === "recent") {
-      return {
-        battles: await fetchRecentGuildBattles(region, guildId, limit),
-        battlesError: null,
-      };
-    }
-
-    const raw = await client.getBattlesRaw(region, {
-      guildId,
-      limit,
-      sort,
-      range: "week",
-      requestOptions,
-    });
-
     return {
-      battles: summarizeGuildBattles(raw, guildId),
+      battles: await fetchEntityBattles(region, { guildId }, sort, limit),
       battlesError: null,
     };
   } catch (err) {
@@ -454,7 +471,7 @@ export async function getGuildBattlesBySort(
   }
 }
 
-/** Alliance battles by sort (week window) — Albion summaries, no guild-member filter. */
+/** Alliance battles by sort (week window). Drops 1-member cameos, same as guild lists. */
 export async function getAllianceBattlesBySort(
   region: AlbionRegion,
   allianceId: string,
@@ -464,24 +481,12 @@ export async function getAllianceBattlesBySort(
   if (!isRegionEnabled(region)) {
     return { battles: [], battlesError: null };
   }
-  const { getAlbionClient } = await import("./client");
-  const client = getAlbionClient();
 
   try {
-    const raw = await client.getBattlesRaw(region, {
-      allianceId,
-      limit,
-      sort,
-      range: "week",
-      requestOptions: GUILD_BATTLES_REQUEST_OPTIONS,
-    });
-
-    const battles: GuildBattleSummary[] = raw
-      .filter(hasBattleKillFame)
-      .filter((battle): battle is AlbionBattle & { id: number } => battle.id != null)
-      .map((battle) => toAllianceBattleSummary(battle, allianceId));
-
-    return { battles, battlesError: null };
+    return {
+      battles: await fetchEntityBattles(region, { allianceId }, sort, limit),
+      battlesError: null,
+    };
   } catch (err) {
     return {
       battles: [],
