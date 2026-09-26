@@ -79,6 +79,7 @@ async function ensureMissingGuildFeeds(
       region: source.region,
       targetName: source.targetName,
       createdByUserId: source.createdByUserId,
+      createdByDiscordUserId: source.createdByDiscordUserId,
       createdAt: now,
       updatedAt: now,
     }))
@@ -303,6 +304,7 @@ export async function trackGuildFeeds(input: {
   albionGuildId: string;
   albionGuildName: string;
   createdByUserId: string;
+  createdByDiscordUserId: string;
 }): Promise<{ replaced: boolean }> {
   await upsertDiscordServer(input.discordGuildId, input.discordGuildName);
 
@@ -339,6 +341,7 @@ export async function trackGuildFeeds(input: {
       region: input.region,
       targetName: input.albionGuildName,
       createdByUserId: input.createdByUserId,
+      createdByDiscordUserId: input.createdByDiscordUserId,
       createdAt: now,
       updatedAt: now,
     },
@@ -350,6 +353,7 @@ export async function trackGuildFeeds(input: {
       region: input.region,
       targetName: input.albionGuildName,
       createdByUserId: input.createdByUserId,
+      createdByDiscordUserId: input.createdByDiscordUserId,
       createdAt: now,
       updatedAt: now,
     },
@@ -361,6 +365,7 @@ export async function trackGuildFeeds(input: {
       region: input.region,
       targetName: input.albionGuildName,
       createdByUserId: input.createdByUserId,
+      createdByDiscordUserId: input.createdByDiscordUserId,
       createdAt: now,
       updatedAt: now,
     },
@@ -372,6 +377,7 @@ export async function trackGuildFeeds(input: {
       region: input.region,
       targetName: input.albionGuildName,
       createdByUserId: input.createdByUserId,
+      createdByDiscordUserId: input.createdByDiscordUserId,
       createdAt: now,
       updatedAt: now,
     },

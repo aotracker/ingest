@@ -31,6 +31,7 @@ import {
   upsertDiscordServer,
 } from "./db";
 import { regionLabel } from "./format";
+import { appPublicUrl } from "./enabled";
 import {
   addWatchlistEntry,
   consumeWatchlistRateLimit,
@@ -477,13 +478,23 @@ async function handleTrack(
     return;
   }
 
+  const siteUserId = await findUserIdByDiscordAccountId(interaction.user.id);
+  if (!siteUserId) {
+    await interaction.reply({
+      content: `Sign in with Discord on AOTracker first, then run \`/track\` again.\n${appPublicUrl()}/account/discord`,
+      ephemeral: true,
+    });
+    return;
+  }
+
   const { replaced } = await trackGuildFeeds({
     discordGuildId: interaction.guildId!,
     discordGuildName: interaction.guild?.name ?? null,
     region: regionRaw,
     albionGuildId: guild.albionId,
     albionGuildName: guild.name,
-    createdByUserId: interaction.user.id,
+    createdByUserId: siteUserId,
+    createdByDiscordUserId: interaction.user.id,
   });
 
   await interaction.reply({
