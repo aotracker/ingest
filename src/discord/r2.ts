@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { snapshotCdnBase } from "./enabled";
 
@@ -8,6 +7,9 @@ const R2_ENV = [
   "R2_SECRET_ACCESS_KEY",
   "R2_BUCKET_NAME",
 ] as const;
+
+/** Match Discord embed lifetime; pair with an R2 lifecycle rule on `snapshots/`. */
+const SNAPSHOT_CACHE_CONTROL = "public, max-age=604800";
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -35,40 +37,35 @@ function r2Client(): S3Client {
   return client;
 }
 
-export function snapshotObjectKey(
-  region: string,
-  eventId: number,
-  digest: string
-): string {
-  return `snapshots/${region}/${eventId}-${digest}.png`;
+/** Stable key so retries / kill+death feeds overwrite one object per event. */
+export function snapshotObjectKey(region: string, eventId: number): string {
+  return `snapshots/${region}/${eventId}.png`;
 }
 
-export function snapshotPublicUrl(
-  region: string,
-  eventId: number,
-  digest: string
-): string {
-  return `${snapshotCdnBase()}/${region}/${eventId}-${digest}.png`;
+export function snapshotPublicUrl(region: string, eventId: number): string {
+  return `${snapshotCdnBase()}/${region}/${eventId}.png`;
 }
 
+/**
+ * One object per battle + tracked guild (feeds highlight different guilds).
+ * Guild id is sanitized for object keys.
+ */
 export function battleSnapshotObjectKey(
   region: string,
   battleId: number,
-  digest: string
+  trackedGuildId: string
 ): string {
-  return `snapshots/${region}/battle-${battleId}-${digest}.png`;
+  const guildKey = trackedGuildId.replace(/[^a-zA-Z0-9_-]/g, "_") || "guild";
+  return `snapshots/${region}/battle-${battleId}-${guildKey}.png`;
 }
 
 export function battleSnapshotPublicUrl(
   region: string,
   battleId: number,
-  digest: string
+  trackedGuildId: string
 ): string {
-  return `${snapshotCdnBase()}/${region}/battle-${battleId}-${digest}.png`;
-}
-
-function pngDigest(body: Buffer): string {
-  return createHash("sha256").update(body).digest("hex").slice(0, 12);
+  const guildKey = trackedGuildId.replace(/[^a-zA-Z0-9_-]/g, "_") || "guild";
+  return `${snapshotCdnBase()}/${region}/battle-${battleId}-${guildKey}.png`;
 }
 
 export async function uploadSnapshotPng(
@@ -77,36 +74,35 @@ export async function uploadSnapshotPng(
   body: Buffer
 ): Promise<string> {
   const bucket = requireEnv("R2_BUCKET_NAME");
-  const digest = pngDigest(body);
-  const key = snapshotObjectKey(region, eventId, digest);
+  const key = snapshotObjectKey(region, eventId);
   await r2Client().send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: "image/png",
-      CacheControl: "public, max-age=31536000, immutable",
+      CacheControl: SNAPSHOT_CACHE_CONTROL,
     })
   );
-  return snapshotPublicUrl(region, eventId, digest);
+  return snapshotPublicUrl(region, eventId);
 }
 
 export async function uploadBattleSnapshotPng(
   region: string,
   battleId: number,
+  trackedGuildId: string,
   body: Buffer
 ): Promise<string> {
   const bucket = requireEnv("R2_BUCKET_NAME");
-  const digest = pngDigest(body);
-  const key = battleSnapshotObjectKey(region, battleId, digest);
+  const key = battleSnapshotObjectKey(region, battleId, trackedGuildId);
   await r2Client().send(
     new PutObjectCommand({
       Bucket: bucket,
       Key: key,
       Body: body,
       ContentType: "image/png",
-      CacheControl: "public, max-age=31536000, immutable",
+      CacheControl: SNAPSHOT_CACHE_CONTROL,
     })
   );
-  return battleSnapshotPublicUrl(region, battleId, digest);
+  return battleSnapshotPublicUrl(region, battleId, trackedGuildId);
 }

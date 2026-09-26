@@ -66,6 +66,7 @@ async function battleEmbedWithImage(input: {
         const imageUrl = await uploadBattleSnapshotPng(
           input.snapshot.region,
           input.snapshot.albionBattleId,
+          input.trackedGuildId,
           png
         );
         embed.image = { url: imageUrl };
