@@ -414,7 +414,6 @@ export const killItems = pgTable(
     itemType: text("item_type").notNull(),
     quality: integer("quality").default(0),
     count: integer("count").default(1),
-    spells: jsonb("spells"),
   },
   (t) => [index("kill_items_event_idx").on(t.eventId)]
 );

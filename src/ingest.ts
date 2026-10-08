@@ -659,7 +659,6 @@ function extractItemsFromEquipment(
     itemType: string;
     quality: number;
     count: number;
-    spells: { active: string[]; passive: string[] };
   }[] = [];
 
   if (!equipment) return items;
@@ -674,10 +673,6 @@ function extractItemsFromEquipment(
         itemType: item.Type,
         quality: item.Quality ?? 0,
         count: item.Count ?? 1,
-        spells: {
-          active: item.ActiveSpells ?? [],
-          passive: item.PassiveSpells ?? [],
-        },
       });
     }
   }
@@ -696,7 +691,6 @@ function extractInventoryItems(
     itemType: string;
     quality: number;
     count: number;
-    spells: { active: string[]; passive: string[] };
   }[] = [];
 
   if (!inventory) return items;
@@ -710,10 +704,6 @@ function extractInventoryItems(
         itemType: item.Type,
         quality: item.Quality ?? 0,
         count: item.Count ?? 1,
-        spells: {
-          active: item.ActiveSpells ?? [],
-          passive: item.PassiveSpells ?? [],
-        },
       });
     }
   });
@@ -728,7 +718,6 @@ type KillEventItemInsert = {
   itemType: string;
   quality: number;
   count: number;
-  spells: { active: string[]; passive: string[] };
 };
 
 type KillEventParticipantInsert = {
@@ -889,7 +878,6 @@ async function insertKillEventChildren(
       itemType: item.itemType,
       quality: item.quality,
       count: item.count,
-      spells: item.spells,
     }))
   );
   if (itemValues.length > 0) {

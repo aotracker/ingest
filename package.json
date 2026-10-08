@@ -35,6 +35,7 @@
     "promote-admin": "tsx --env-file=.env scripts/promote-admin.ts",
     "db:apply-kill-events-battle-idx": "tsx --env-file=.env scripts/db/apply-kill-events-battle-idx.ts",
     "db:apply-kill-detail-eviction": "tsx --env-file=.env scripts/db/apply-kill-detail-eviction-schema.ts",
+    "db:apply-kill-item-spells": "tsx --env-file=.env scripts/db/apply-kill-item-spells.ts",
     "db:apply-battles-feed-optimization": "tsx --env-file=.env scripts/db/apply-battles-feed-optimization.ts",
     "db:apply-kill-leaderboard-idx": "tsx --env-file=.env scripts/db/apply-kill-leaderboard-idx.ts",
     "db:apply-kill-leaderboard-columns": "tsx --env-file=.env scripts/db/apply-kill-leaderboard-columns.ts",

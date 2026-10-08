@@ -27,6 +27,7 @@ Production OVH host: **8 vCPU / 24 GB RAM**. Postgres and Redis run in Docker (`
 | `npm run jobs:ingest` | One-off ingest poll |
 | `npm run jobs:health` | One-off API health check |
 | `npm run db:retain` | Weekly retention (battle JSON, kill compact, hour-stat purge). `--dry-run` first. After the first real kill compact, run `VACUUM ANALYZE kill_events, kill_participants, kill_items;` on Postgres. |
+| `npm run db:apply-kill-item-spells` | Deliberately drop the unused `kill_items.spells` column after the write-stop deployment has been verified; uses a 5-second lock timeout. |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run test` | Vitest unit tests |
 | `npm run check:drift` | Diff watched `src/lib` copies against sibling `client/` |
