@@ -15,6 +15,8 @@ import {
   tryClaimPost,
   recordPostedMessage,
   clearPostClaim,
+  isPermanentDiscordAccessError,
+  markFeedDeliveryFailed,
 } from "./db";
 import { FEED_GUILD_LIVE } from "./types";
 import { regionLabel } from "./format";
@@ -91,7 +93,8 @@ export async function handleNotifyDiscordLive(
         eq(schema.discordFeeds.feedType, FEED_GUILD_LIVE),
         eq(schema.discordFeeds.region, link.region),
         eq(schema.discordFeeds.targetAlbionId, guildAlbionId),
-        eq(schema.discordFeeds.enabled, 1)
+        eq(schema.discordFeeds.enabled, 1),
+        eq(schema.discordFeeds.deliveryStatus, "healthy")
       )
     );
 
@@ -171,6 +174,9 @@ export async function handleNotifyDiscordLive(
       await recordPostedMessage(feed.id, eventKey, message.id ?? null);
     } catch (err) {
       await clearPostClaim(feed.id, eventKey).catch(() => undefined);
+      if (isPermanentDiscordAccessError(err)) {
+        await markFeedDeliveryFailed(feed.id, err);
+      }
       throw err;
     }
   }

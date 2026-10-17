@@ -5,6 +5,8 @@ import {
   feedFilters,
   getFeedById,
   getPostedMessage,
+  isPermanentDiscordAccessError,
+  markFeedDeliveryFailed,
   tryClaimPost,
   upsertPostedMessage,
 } from "./db";
@@ -56,7 +58,14 @@ export async function handleNotifyDiscordBattle(payload: {
   }
 
   const feed = await getFeedById(payload.feedId);
-  if (!feed || feed.enabled !== 1 || !feed.channelId) return;
+  if (
+    !feed ||
+    feed.enabled !== 1 ||
+    feed.deliveryStatus !== "healthy" ||
+    !feed.channelId
+  ) {
+    return;
+  }
 
   let snapshot = await loadBattleSnapshot(payload.region, payload.battleId);
   if (!snapshot) {
@@ -163,6 +172,9 @@ export async function handleNotifyDiscordBattle(payload: {
     });
   } catch (err) {
     await clearPostClaim(feed.id, eventKey);
+    if (isPermanentDiscordAccessError(err)) {
+      await markFeedDeliveryFailed(feed.id, err);
+    }
     throw err;
   }
 }

@@ -25,6 +25,10 @@ async function main() {
         "channel_id" text,
         "filters" jsonb DEFAULT '{}'::jsonb NOT NULL,
         "enabled" integer DEFAULT 1 NOT NULL,
+        "delivery_status" text DEFAULT 'healthy' NOT NULL,
+        "delivery_error_code" text,
+        "delivery_error_message" text,
+        "delivery_error_at" timestamp with time zone,
         "created_by_user_id" text,
         "created_at" timestamp with time zone DEFAULT now() NOT NULL,
         "updated_at" timestamp with time zone DEFAULT now() NOT NULL

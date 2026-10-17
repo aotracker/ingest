@@ -17,6 +17,56 @@ import {
 
 export type DiscordFeedRow = typeof schema.discordFeeds.$inferSelect;
 
+export const DISCORD_FEED_HEALTHY = "healthy";
+
+export function discordErrorCode(err: unknown): number | null {
+  if (!err || typeof err !== "object") return null;
+  const code = "code" in err ? Number((err as { code?: unknown }).code) : NaN;
+  const status = "status" in err ? Number((err as { status?: unknown }).status) : NaN;
+  return Number.isFinite(code) ? code : Number.isFinite(status) ? status : null;
+}
+
+export function isPermanentDiscordAccessError(err: unknown): boolean {
+  const code = discordErrorCode(err);
+  return code === 50001 || code === 10003 || code === 10004 || code === 50013;
+}
+
+export async function markFeedDeliveryFailed(
+  feedId: string,
+  err: unknown
+): Promise<void> {
+  const code = discordErrorCode(err);
+  await db
+    .update(schema.discordFeeds)
+    .set({
+      deliveryStatus: "disabled",
+      deliveryErrorCode: code == null ? "DISCORD_ACCESS" : String(code),
+      deliveryErrorMessage: err instanceof Error ? err.message : String(err),
+      deliveryErrorAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.discordFeeds.id, feedId));
+}
+
+export async function disableFeedsForGuild(
+  discordGuildId: string,
+  reason: string
+): Promise<void> {
+  await db
+    .update(schema.discordFeeds)
+    .set({
+      deliveryStatus: "disabled",
+      deliveryErrorCode: reason,
+      deliveryErrorMessage:
+        reason === "GUILD_LEFT"
+          ? "The AOTracker bot is no longer in this Discord server."
+          : reason,
+      deliveryErrorAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.discordFeeds.discordGuildId, discordGuildId));
+}
+
 export async function upsertDiscordServer(
   discordGuildId: string,
   name: string | null,
@@ -99,6 +149,7 @@ export async function findMatchingBattleFeeds(input: {
         eq(schema.discordFeeds.targetType, "guild"),
         eq(schema.discordFeeds.region, input.region),
         eq(schema.discordFeeds.enabled, 1),
+        eq(schema.discordFeeds.deliveryStatus, DISCORD_FEED_HEALTHY),
         isNotNull(schema.discordFeeds.channelId)
       )
     );
@@ -118,7 +169,8 @@ export async function findMatchingFeeds(input: {
         eq(schema.discordFeeds.targetType, "guild"),
         eq(schema.discordFeeds.targetAlbionId, input.targetAlbionId),
         eq(schema.discordFeeds.region, input.region),
-        eq(schema.discordFeeds.enabled, 1)
+        eq(schema.discordFeeds.enabled, 1),
+        eq(schema.discordFeeds.deliveryStatus, DISCORD_FEED_HEALTHY)
       )
     );
 }
@@ -156,6 +208,7 @@ export async function findMatchingFeedsForKill(input: {
         eq(schema.discordFeeds.targetType, "guild"),
         eq(schema.discordFeeds.region, input.region),
         eq(schema.discordFeeds.enabled, 1),
+        eq(schema.discordFeeds.deliveryStatus, DISCORD_FEED_HEALTHY),
         or(...typeMatches)
       )
     );
@@ -399,8 +452,19 @@ export async function setFeedChannel(
   const patch: {
     channelId: string;
     updatedAt: Date;
+    deliveryStatus: string;
+    deliveryErrorCode: null;
+    deliveryErrorMessage: null;
+    deliveryErrorAt: null;
     filters?: DiscordFeedFilters;
-  } = { channelId, updatedAt: now };
+  } = {
+    channelId,
+    updatedAt: now,
+    deliveryStatus: DISCORD_FEED_HEALTHY,
+    deliveryErrorCode: null,
+    deliveryErrorMessage: null,
+    deliveryErrorAt: null,
+  };
 
   if (!feed.channelId) {
     patch.filters = {
@@ -529,6 +593,7 @@ export async function listPostableFeeds(): Promise<DiscordFeedRow[]> {
     .where(
       and(
         eq(schema.discordFeeds.enabled, 1),
+        eq(schema.discordFeeds.deliveryStatus, DISCORD_FEED_HEALTHY),
         isNotNull(schema.discordFeeds.channelId)
       )
     );

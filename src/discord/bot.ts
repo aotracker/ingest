@@ -17,7 +17,7 @@ import {
   handleChatCommand,
   slashCommandBuilders,
 } from "./commands";
-import { upsertDiscordServer } from "./db";
+import { disableFeedsForGuild, upsertDiscordServer } from "./db";
 import { recordOpsEvent } from "@aotracker/core/ops/events";
 import {
   recordDiscordBotError,
@@ -179,6 +179,9 @@ export async function startDiscordBot(): Promise<Client> {
   client.on(Events.GuildDelete, (guild) => {
     void upsertDiscordServer(guild.id, guild.name, true).catch((err) => {
       console.warn("[discord] guildDelete upsert failed:", err);
+    });
+    void disableFeedsForGuild(guild.id, "GUILD_LEFT").catch((err) => {
+      console.warn("[discord] guildDelete feed cleanup failed:", err);
     });
   });
 

@@ -564,6 +564,12 @@ async function handleStatus(
     `**Deaths:** ${deaths?.channelId ? `<#${deaths.channelId}>` : "not set"}`,
     `**Battles:** ${battles?.channelId ? `<#${battles.channelId}>` : "not set"}`,
     `**Live:** ${live?.channelId ? `<#${live.channelId}>` : "not set"}`,
+    ...[kills, deaths, battles, live]
+      .filter((feed) => feed?.deliveryStatus !== "healthy")
+      .map(
+        (feed) =>
+          `**${feed?.feedType ?? "feed"} delivery:** disabled — ${feed?.deliveryErrorMessage ?? feed?.deliveryErrorCode ?? "Discord access unavailable"}`
+      ),
     `**Kills filters:** ${formatFilterLine(parseFilters(kills?.filters))}`,
     `**Deaths filters:** ${formatFilterLine(parseFilters(deaths?.filters))}`,
     `**Battles filters:** ${formatBattleFilterLine(parseFilters(battles?.filters))}`,

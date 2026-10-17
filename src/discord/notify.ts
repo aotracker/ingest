@@ -1,6 +1,13 @@
 import type { AlbionRegion } from "@aotracker/core/albion/types";
 import { isDiscordEnabled } from "./enabled";
-import { feedFilters, getFeedById, hasPostedMessage, recordPostedMessage } from "./db";
+import {
+  feedFilters,
+  getFeedById,
+  hasPostedMessage,
+  isPermanentDiscordAccessError,
+  markFeedDeliveryFailed,
+  recordPostedMessage,
+} from "./db";
 import { killMeetsFeedFilters } from "./kill-filters";
 import { loadKillSnapshot } from "./kill-data";
 import { postKillToFeed } from "./poster";
@@ -24,7 +31,14 @@ export async function handleNotifyDiscord(payload: {
   }
 
   const feed = await getFeedById(payload.feedId);
-  if (!feed || feed.enabled !== 1 || !feed.channelId) return;
+  if (
+    !feed ||
+    feed.enabled !== 1 ||
+    feed.deliveryStatus !== "healthy" ||
+    !feed.channelId
+  ) {
+    return;
+  }
 
   const eventKey = killEventKey(payload.region, payload.eventId);
   if (await hasPostedMessage(feed.id, eventKey)) return;
@@ -47,12 +61,19 @@ export async function handleNotifyDiscord(payload: {
     return;
   }
 
-  await postKillToFeed({
-    feedId: feed.id,
-    feedType: feed.feedType,
-    channelId: feed.channelId,
-    eventKey,
-    snapshot,
-    pingRoleId: feedFilters(feed).pingRoleId,
-  });
+  try {
+    await postKillToFeed({
+      feedId: feed.id,
+      feedType: feed.feedType,
+      channelId: feed.channelId,
+      eventKey,
+      snapshot,
+      pingRoleId: feedFilters(feed).pingRoleId,
+    });
+  } catch (err) {
+    if (isPermanentDiscordAccessError(err)) {
+      await markFeedDeliveryFailed(feed.id, err);
+    }
+    throw err;
+  }
 }

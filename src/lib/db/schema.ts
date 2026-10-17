@@ -545,6 +545,10 @@ export const discordFeeds = pgTable(
     channelId: text("channel_id"),
     filters: jsonb("filters").notNull().default({}),
     enabled: integer("enabled").notNull().default(1),
+    deliveryStatus: text("delivery_status").notNull().default("healthy"),
+    deliveryErrorCode: text("delivery_error_code"),
+    deliveryErrorMessage: text("delivery_error_message"),
+    deliveryErrorAt: timestamp("delivery_error_at", { withTimezone: true }),
     createdByUserId: text("created_by_user_id").references(() => user.id, {
       onDelete: "set null",
     }),
